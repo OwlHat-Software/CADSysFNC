@@ -2739,6 +2739,9 @@ type
     fListOfObjects, fListOfBlocks: TGraphicObjList;
     { There are two list. The one of the objects and the one of the blocks. }
     fNextID, fNextBlockID: LongInt; { Contain the next ID to assign. }
+    { While a drawing is loaded (not merged): the IDs of the objects read
+      so far, so that each keeps its saved ID (LoadedObjectID). }
+    fLoadedIDs: TBits;
     fListOfViewport: TList; { Contains all the Viewports linked. }
     fLayers: TLayers; { Layers of the component. }
     fSheets: TCADSheets; { Paper space. Empty in every drawing until
@@ -2861,6 +2864,14 @@ type
       reported through CADSysWarn and skipped. }
     procedure LoadObjectFromJSON(const AJSON: TJSONObject;
       const ABlocks: TExclusiveGraphicObjIterator); virtual; abstract;
+    { : The ID to add a loaded object AObj with: its saved ID when a
+      drawing is loaded, -1 (a new one) when it is merged in or when its
+      ID was already used by an earlier object of the same file.
+      Keeping the IDs keeps everything that refers to an object by ID
+      right - an application's own data, links between objects. Numbering
+      anew closed the gaps deleted objects leave, and moved every later
+      object to another object's ID. }
+    function LoadedObjectID(const AObj: TGraphicObject): LongInt;
     { : True when AObj belongs in a saved drawing: on a streamable
       layer and not marked otherwise. One test for every save path. }
     function IsObjectToSave(const AObj: TGraphicObject): Boolean;
@@ -18487,6 +18498,32 @@ begin
   Result := Layers[AObj.Layer].Streamable and AObj.fToBeSaved;
 end;
 
+function TFNCCADCmp.LoadedObjectID(const AObj: TGraphicObject): LongInt;
+const
+  { Beyond this an ID is not tracked (32 MB of bits): a new one. }
+  MaxTrackedID = 256 * 1024 * 1024;
+var
+  TmpSize: Integer;
+begin
+  Result := -1;
+  if (fLoadedIDs = nil) or (AObj.ID < 0) or (AObj.ID >= MaxTrackedID) then
+    Exit;
+  if AObj.ID >= fLoadedIDs.Size then
+  begin
+    { Doubling: growing one bit at a time reallocates for every object. }
+    TmpSize := fLoadedIDs.Size * 2;
+    if TmpSize <= AObj.ID then
+      TmpSize := AObj.ID + 1;
+    if TmpSize > MaxTrackedID then
+      TmpSize := MaxTrackedID;
+    fLoadedIDs.Size := TmpSize;
+  end;
+  if fLoadedIDs[AObj.ID] then
+    Exit;
+  fLoadedIDs[AObj.ID] := True;
+  Result := AObj.ID;
+end;
+
 function TFNCCADCmp.CountObjectsToSave: Integer;
 var
   TmpIter: TExclusiveGraphicObjIterator;
@@ -18616,7 +18653,13 @@ begin
   DeleteSavedSourceBlocks;
   fSheets.Clear;
   fViews.Clear;
-  MergeFromJSONReader(AReader);
+  { Loading, not merging: the objects keep their saved IDs. }
+  fLoadedIDs := TBits.Create;
+  try
+    MergeFromJSONReader(AReader);
+  finally
+    FreeAndNil(fLoadedIDs);
+  end;
 end;
 
 procedure TFNCCADCmp.MergeFromJSONReader(const AReader: TJsonReader);
@@ -18855,7 +18898,13 @@ begin
   { And the named views, after the sheets so that clearing them has no
     viewports left to unlink. }
   fViews.Clear;
-  MergeFromJSON(AJSON);
+  { Loading, not merging: the objects keep their saved IDs. }
+  fLoadedIDs := TBits.Create;
+  try
+    MergeFromJSON(AJSON);
+  finally
+    FreeAndNil(fLoadedIDs);
+  end;
 end;
 
 procedure TFNCCADCmp.LoadFromStream(const Stream: TStream);
@@ -21834,7 +21883,7 @@ begin
       end;
     end;
   CurrentLayer := TmpObj.Layer;
-  inherited AddObject(-1, TmpObj);
+  inherited AddObject(LoadedObjectID(TmpObj), TmpObj);
 end;
 {$WARNINGS ON}
 
@@ -23628,7 +23677,7 @@ begin
       end;
     end;
   CurrentLayer := TmpObj.Layer;
-  inherited AddObject(-1, TmpObj);
+  inherited AddObject(LoadedObjectID(TmpObj), TmpObj);
 end;
 {$WARNINGS ON}
 
