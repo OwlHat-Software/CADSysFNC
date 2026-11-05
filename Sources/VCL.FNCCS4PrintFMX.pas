@@ -50,6 +50,12 @@ procedure CADPrintSheetsFMX(const ACAD: TFNCCADCmp2D;
   const ASheets: TCADSheets; const ATitle: String = '';
   const AFirstSheet: Integer = 0; const ALastSheet: Integer = -1);
 
+{ : Prints ASheet tiled onto ATiling's paper at full size, one page per
+  tile with its marks, on FMX's active printer. }
+procedure CADPrintSheetTiledFMX(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const ATitle: String = '');
+
 { : Prints ASetup's pages of the model on FMX's active printer. }
 procedure CADPrintPagesFMX(const ACAD: TFNCCADCmp2D;
   const ASetup: TCADPageSetup; const ATitle: String = '';
@@ -108,6 +114,17 @@ begin
 {$IFDEF MSWINDOWS}
   CADPrintSheetsWin(ACAD, ASheets, CADFMXPrinterName, ATitle, AFirstSheet,
     ALastSheet);
+{$ELSE}
+  NotHere;
+{$ENDIF}
+end;
+
+procedure CADPrintSheetTiledFMX(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const ATitle: String);
+begin
+{$IFDEF MSWINDOWS}
+  CADPrintSheetTiledWin(ACAD, ASheet, ATiling, CADFMXPrinterName, ATitle);
 {$ELSE}
   NotHere;
 {$ENDIF}

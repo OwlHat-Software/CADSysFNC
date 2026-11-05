@@ -512,6 +512,48 @@ type
 
   end;
 
+type
+  { : CS-20: one sheet over smaller pages. 25.4 dpi, one pixel to the
+    millimetre, so that what the recording canvas logs reads as millimetres
+    on the page. }
+  [TestFixture]
+  TCADSheetTilingTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    function Device: TCADPageDevice;
+    function DrawTile(const ATiling: TCADSheetTiling;
+      const AIndex: Integer): string;
+    function TextOf(const ALog: string): string;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure AnA1SheetOnA4TakesFiveByThree;
+    [Test]
+    procedure TheTilesOverlapByTheOverlapAndCoverTheSheet;
+    [Test]
+    procedure AnA4SheetOnA4IsAnOrdinaryPrint;
+    [Test]
+    procedure TheSheetLandsInThePrintableArea;
+    [Test]
+    procedure TheNameSaysWhichTileOfWhichSheet;
+    [Test]
+    procedure MarksComeOnlyOnTheSidesWithANeighbour;
+    [Test]
+    procedure MarksAreOnThePageAndNotOnTheSheet;
+    [Test]
+    procedure MarksCanBeLeftOff;
+    [Test]
+    procedure APrintersEdgeRaisesTheMargins;
+    [Test]
+    procedure AnOverlapLargerThanThePageIsRefused;
+    [Test]
+    procedure AWiderAlphabetOfColumnsGoesOnToAA;
+  end;
+
 implementation
 
 { ==================================================================
@@ -2934,6 +2976,300 @@ begin
   end;
 end;
 
+{ ==================================================================
+  TCADSheetTilingTests
+  ================================================================== }
+
+function TCADSheetTilingTests.Device: TCADPageDevice;
+begin
+  Result := TCADPageDevice.FromPixelsPerMM(1);
+end;
+
+procedure TCADSheetTilingTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FSheet := FCAD.Sheets.Add('Overview');
+  FSheet.Paper := pkA1;
+  FSheet.Orientation := pgoLandscape;
+  { A line on the sheet, at 200 and 500 mm from its bottom-left corner. }
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(200, 500), Point2D(300, 500)));
+end;
+
+procedure TCADSheetTilingTests.TearDown;
+begin
+  FCAD.Free;
+end;
+
+function TCADSheetTilingTests.DrawTile(const ATiling: TCADSheetTiling;
+  const AIndex: Integer): string;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 2000, 2000));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheetTile(FCAD, FSheet, ATiling, Device, AIndex, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Result := TmpRec.Log.Text;
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+function TCADSheetTilingTests.TextOf(const ALog: string): string;
+var
+  TmpList: TStringList;
+  I: Integer;
+begin
+  Result := '';
+  TmpList := TStringList.Create;
+  try
+    TmpList.Text := ALog;
+    for I := 0 to TmpList.Count - 1 do
+      if TmpList[I].StartsWith('DrawText ') then
+        Result := Result + TmpList[I].Substring(9);
+  finally
+    TmpList.Free;
+  end;
+end;
+
+procedure TCADSheetTilingTests.AnA1SheetOnA4TakesFiveByThree;
+var
+  TmpAcross, TmpDown: Integer;
+  TmpWin: TRect2D;
+begin
+  CADSheetTileCount(FSheet, TCADSheetTiling.Default, Device, TmpAcross,
+    TmpDown);
+  Assert.AreEqual(5, TmpAcross, 'across');
+  Assert.AreEqual(3, TmpDown, 'down');
+  { Tile 0 is the top left, 190 x 277 of it. }
+  TmpWin := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device, 0);
+  Assert.AreEqual(0.0, Double(TmpWin.Left), 1E-6, 'left');
+  Assert.AreEqual(594.0, Double(TmpWin.Top), 1E-6, 'top');
+  Assert.AreEqual(190.0, Double(TmpWin.Right), 1E-6, 'right');
+  Assert.AreEqual(594.0 - 277.0, Double(TmpWin.Bottom), 1E-6, 'bottom');
+end;
+
+procedure TCADSheetTilingTests.TheTilesOverlapByTheOverlapAndCoverTheSheet;
+var
+  TmpAcross, TmpDown, I: Integer;
+  TmpA, TmpB: TRect2D;
+begin
+  CADSheetTileCount(FSheet, TCADSheetTiling.Default, Device, TmpAcross,
+    TmpDown);
+  for I := 0 to TmpAcross - 2 do
+  begin
+    TmpA := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device, I);
+    TmpB := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device, I + 1);
+    Assert.AreEqual(10.0, Double(TmpA.Right - TmpB.Left), 1E-6,
+      Format('across, tile %d', [I]));
+  end;
+  for I := 0 to TmpDown - 2 do
+  begin
+    TmpA := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device,
+      I * TmpAcross);
+    TmpB := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device,
+      (I + 1) * TmpAcross);
+    Assert.AreEqual(10.0, Double(TmpB.Top - TmpA.Bottom), 1E-6,
+      Format('down, row %d', [I]));
+  end;
+  { The last one reaches the far corner, and no further. }
+  TmpA := CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device,
+    TmpAcross * TmpDown - 1);
+  Assert.AreEqual(841.0, Double(TmpA.Right), 1E-6, 'the sheet''s right edge');
+  Assert.AreEqual(0.0, Double(TmpA.Bottom), 1E-6, 'the sheet''s bottom edge');
+  Assert.WillRaise(
+    procedure
+    begin
+      CADSheetTileWindow(FSheet, TCADSheetTiling.Default, Device,
+        TmpAcross * TmpDown);
+    end, ECADPageError, 'no tile past the last');
+end;
+
+procedure TCADSheetTilingTests.AnA4SheetOnA4IsAnOrdinaryPrint;
+var
+  TmpAcross, TmpDown: Integer;
+  TmpLog: string;
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  FSheet.Paper := pkA4;
+  FSheet.Orientation := pgoPortrait;
+  CADSheetTileCount(FSheet, TCADSheetTiling.Default, Device, TmpAcross,
+    TmpDown);
+  Assert.AreEqual(1, TmpAcross * TmpDown, 'one page');
+  TmpLog := DrawTile(TCADSheetTiling.Default, 0);
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 2000, 2000));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Assert.AreEqual(TmpRec.Log.Text, TmpLog, 'the same as drawing the sheet');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADSheetTilingTests.TheSheetLandsInThePrintableArea;
+var
+  TmpTiling: TCADSheetTiling;
+  TmpLog: string;
+  TmpList: TStringList;
+  I, TmpX, TmpY: Integer;
+  TmpParts: TArray<string>;
+begin
+  TmpTiling := TCADSheetTiling.Default;
+  TmpTiling.Marks := False;
+  { The second tile starts 180 mm along the sheet. }
+  TmpLog := DrawTile(TmpTiling, 1);
+  Assert.IsTrue(TmpLog.StartsWith('PushClip 10,10,200,287'),
+    'clipped to the printable area: ' + TmpLog);
+  TmpList := TStringList.Create;
+  try
+    TmpList.Text := TmpLog;
+    TmpX := -1;
+    TmpY := -1;
+    for I := 0 to TmpList.Count - 1 do
+      if TmpList[I].StartsWith('MoveTo ') then
+      begin
+        TmpParts := TmpList[I].Substring(7).Split([',']);
+        TmpX := StrToInt(TmpParts[0]);
+        TmpY := StrToInt(TmpParts[1]);
+        Break;
+      end;
+  finally
+    TmpList.Free;
+  end;
+  { 200 mm on the sheet, 180 of them on the tile before: 20 in from a
+    margin of 10. 500 up a sheet of 594: 94 down from a margin of 10. }
+  Assert.IsTrue(Abs(TmpX - 30) <= 1, Format('X is %d', [TmpX]));
+  Assert.IsTrue(Abs(TmpY - 104) <= 1, Format('Y is %d', [TmpY]));
+end;
+
+procedure TCADSheetTilingTests.TheNameSaysWhichTileOfWhichSheet;
+var
+  TmpText: string;
+begin
+  TmpText := TextOf(DrawTile(TCADSheetTiling.Default, 0));
+  Assert.IsTrue(TmpText.StartsWith('A1 '), 'the first: ' + TmpText);
+  Assert.IsTrue(TmpText.Contains('A1 - E3'), 'the grid: ' + TmpText);
+  Assert.IsTrue(TmpText.Contains('Overview'), 'the sheet: ' + TmpText);
+  { Second column, second row, with five to a row. }
+  TmpText := TextOf(DrawTile(TCADSheetTiling.Default, 6));
+  Assert.IsTrue(TmpText.StartsWith('B2 '), 'a middle one: ' + TmpText);
+  TmpText := TextOf(DrawTile(TCADSheetTiling.Default, 14));
+  Assert.IsTrue(TmpText.StartsWith('E3 '), 'the last: ' + TmpText);
+end;
+
+procedure TCADSheetTilingTests.MarksComeOnlyOnTheSidesWithANeighbour;
+
+  { A dash of the cut line down the page, at this X: 190 for a page that
+    is 190 wide less 10 of overlap, from a margin of 10. }
+  function HasCutDown(const ALog: string): Boolean;
+  begin
+    Result := ALog.Contains('MoveTo 190,10' + sLineBreak + 'LineTo 190,13');
+  end;
+
+  function HasCutAcross(const ALog: string): Boolean;
+  begin
+    Result := ALog.Contains('MoveTo 10,277' + sLineBreak + 'LineTo 13,277');
+  end;
+
+var
+  TmpLog: string;
+begin
+  TmpLog := DrawTile(TCADSheetTiling.Default, 0);
+  Assert.IsTrue(HasCutDown(TmpLog), 'tile 0, down its right: ' + TmpLog);
+  Assert.IsTrue(HasCutAcross(TmpLog), 'tile 0, across its bottom: ' + TmpLog);
+  { The last tile has nothing to go under. }
+  TmpLog := DrawTile(TCADSheetTiling.Default, 14);
+  Assert.IsFalse(HasCutDown(TmpLog), 'tile 14, right');
+  Assert.IsFalse(HasCutAcross(TmpLog), 'tile 14, bottom');
+  { But it does have the crosses of the ones it goes over. }
+  Assert.IsTrue(TmpLog.Contains('MoveTo 8,10'), 'a cross in its corner');
+end;
+
+procedure TCADSheetTilingTests.MarksAreOnThePageAndNotOnTheSheet;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 2000, 2000));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawSheet(FCAD, FSheet, Device, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Assert.AreEqual(0, TmpRec.CountOf('DrawText'), 'no name on the sheet');
+    Assert.AreEqual(1, TmpRec.CountOf('MoveTo'), 'only its own line');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADSheetTilingTests.MarksCanBeLeftOff;
+var
+  TmpTiling: TCADSheetTiling;
+begin
+  TmpTiling := TCADSheetTiling.Default;
+  TmpTiling.Marks := False;
+  Assert.AreEqual('', TextOf(DrawTile(TmpTiling, 0)), 'no name');
+end;
+
+procedure TCADSheetTilingTests.APrintersEdgeRaisesTheMargins;
+var
+  TmpDevice: TCADPageDevice;
+  TmpTiling: TCADSheetTiling;
+  TmpWin: TRect2D;
+begin
+  TmpDevice := Device;
+  { A printer whose canvas starts 15 mm in, more than the margin. }
+  TmpDevice.OffsetXPx := -15;
+  TmpDevice.OffsetYPx := -15;
+  TmpTiling := TCADSheetTiling.Default;
+  TmpWin := CADSheetTileWindow(FSheet, TmpTiling, TmpDevice, 0);
+  Assert.AreEqual(180.0, Double(TmpWin.Right - TmpWin.Left), 1E-6, 'width');
+  Assert.AreEqual(267.0, Double(TmpWin.Top - TmpWin.Bottom), 1E-6, 'height');
+end;
+
+procedure TCADSheetTilingTests.AnOverlapLargerThanThePageIsRefused;
+var
+  TmpTiling: TCADSheetTiling;
+  TmpAcross, TmpDown: Integer;
+begin
+  TmpTiling := TCADSheetTiling.Default;
+  TmpTiling.OverlapMM := 200;
+  Assert.WillRaise(
+    procedure
+    begin
+      CADSheetTileCount(FSheet, TmpTiling, Device, TmpAcross, TmpDown);
+    end, ECADPageError, 'nothing would be gained per page');
+end;
+
+procedure TCADSheetTilingTests.AWiderAlphabetOfColumnsGoesOnToAA;
+var
+  TmpTiling: TCADSheetTiling;
+  TmpText: string;
+begin
+  FSheet.Paper := pkCustom;
+  FSheet.CustomWidthMM := 6000;
+  FSheet.CustomHeightMM := 100;
+  FSheet.Orientation := pgoPortrait;
+  TmpTiling := TCADSheetTiling.Default;
+  { The 27th column, on the first row. }
+  TmpText := TextOf(DrawTile(TmpTiling, 26));
+  Assert.IsTrue(TmpText.StartsWith('AA1 '), TmpText);
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TCADViewportInsetTests);
@@ -2950,5 +3286,6 @@ TDUnitX.RegisterTestFixture(TCADNamedViewTests);
 TDUnitX.RegisterTestFixture(TCADViewLinkTests);
 TDUnitX.RegisterTestFixture(TCADViewFromSelectionTests);
 TDUnitX.RegisterTestFixture(TCADSheetDrawingTests);
+TDUnitX.RegisterTestFixture(TCADSheetTilingTests);
 
 end.

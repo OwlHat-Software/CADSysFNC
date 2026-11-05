@@ -332,6 +332,13 @@ procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
   const AFirstSheet: Integer = 0; const ALastSheet: Integer = -1;
   const ALinks: TCADPDFSheetLinksFunc = nil);
 
+{ : Writes ASheet tiled onto ATiling's paper at full size - one page per
+  tile, with its marks - so that the tiles can be checked and sent without
+  a printer. See TCADSheetTiling. }
+procedure CADSaveSheetTiledToPDF(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const AFileName: String);
+
 { : Adds link annotations to a PDF already written: APageLinks[I] go on
   page I, counted from zero in document order, their rectangles in
   millimetres from the page's bottom-left corner. An incremental update
@@ -1294,6 +1301,96 @@ begin
   { Only now: the file is complete and closed. }
   if TmpAnyLinks or (TmpStates <> '') then
     PDFUpdatePages(AFileName, TmpPageLinks, TmpStates);
+end;
+
+procedure CADSaveSheetTiledToPDF(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const AFileName: String);
+var
+  TmpTiling: TCADSheetTiling;
+  TmpDevice: TCADPageDevice;
+  TmpPDF: TTMSFNCPDFLib;
+  TmpEngine: TTMSFNCGraphicsPDFEngine;
+  TmpGraphics: TCADPDFGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpInit: ITMSFNCCustomPDFInitializationLib;
+  TmpPaperW, TmpPaperH: TRealType;
+  TmpBounds: TRect;
+  TmpResolution, TmpAcross, TmpDown, Cont: Integer;
+  TmpStates: String;
+  TmpNoLinks: TArray<TCADPDFLinks>;
+begin
+  TmpStates := '';
+  SetLength(TmpNoLinks, 0);
+  if (ACAD = nil) or (ASheet = nil) or (AFileName = '') then
+    Exit;
+  TmpTiling := ATiling;
+  TmpTiling.PaperSizeMM(TmpPaperW, TmpPaperH);
+
+  TmpPDF := TTMSFNCPDFLib.Create(nil);
+  try
+    TmpPDF.PageSize := psCustom;
+    TmpPDF.PageWidth := TmpPaperW * CADPDFPointsPerMM;
+    TmpPDF.PageHeight := TmpPaperH * CADPDFPointsPerMM;
+    { Orientation is in the two numbers already - see CADSavePagesToPDF. }
+    TmpPDF.PageOrientation := poPortrait;
+    TmpPDF.Header := '';
+    TmpPDF.Footer := '';
+    TmpPDF.PageNumber := pnNone;
+    ConfigurePDF(TmpPDF);
+
+    TmpResolution := CADPDFResolution;
+    if not Supports(TmpPDF.Graphics, ITMSFNCCustomPDFInitializationLib,
+      TmpInit) then
+      TmpResolution := 72;
+    TmpDevice := TCADPageDevice.FromDPI(TmpResolution, TmpResolution);
+    TmpBounds := Rect(0, 0, TmpDevice.MMToPxX(TmpPaperW),
+      TmpDevice.MMToPxY(TmpPaperH));
+    CADSheetTileCount(ASheet, ATiling, TmpDevice, TmpAcross, TmpDown);
+
+    TmpEngine := TTMSFNCGraphicsPDFEngine.Create(TmpPDF);
+    try
+      TmpGraphics := TCADPDFGraphics.CreateForPDF(TmpPDF.Graphics);
+      try
+        TmpCanvas := TDecorativeCanvas.Create(TmpGraphics, False);
+        try
+          TmpPDF.BeginDocument(AFileName);
+          try
+            for Cont := 0 to TmpAcross * TmpDown - 1 do
+            begin
+              TmpPDF.NewPage;
+              TmpGraphics.Attach(TmpEngine, TmpBounds);
+              if TmpResolution <> 72 then
+              begin
+                TmpGraphics.PageHeight := TmpBounds.Bottom;
+                TmpInit.SetPageWidth(TmpBounds.Right);
+                TmpInit.SetPageHeight(TmpBounds.Bottom);
+                TmpEngine.SetMatrix(PDFScaleMatrix(72 / TmpResolution));
+              end
+              else
+                TmpGraphics.PageHeight := TmpPDF.PageHeight;
+              CADDrawSheetTile(ACAD, ASheet, ATiling, TmpDevice, Cont,
+                TmpCanvas);
+              TmpGraphics.Attach(nil, Rect(0, 0, 0, 0));
+            end;
+          finally
+            TmpPDF.EndDocument;
+          end;
+          TmpStates := TmpGraphics.ExtGStates;
+        finally
+          TmpCanvas.Free;
+        end;
+      finally
+        TmpGraphics.Free;
+      end;
+    finally
+      TmpEngine.Free;
+    end;
+  finally
+    TmpPDF.Free;
+  end;
+  if TmpStates <> '' then
+    PDFUpdatePages(AFileName, TmpNoLinks, TmpStates);
 end;
 
 { ------------------------------------------------------------------

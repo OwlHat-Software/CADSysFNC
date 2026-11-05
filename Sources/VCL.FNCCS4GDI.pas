@@ -264,6 +264,12 @@ procedure CADPrintSheetsWin(const ACAD: TFNCCADCmp2D;
   const ASheets: TCADSheets; const APrinterName: String = '';
   const ATitle: String = ''; const AFirstSheet: Integer = 0;
   const ALastSheet: Integer = -1; const AOutputFile: String = '');
+{ : Prints ASheet tiled onto ATiling's paper at full size, one page per
+  tile with its marks. See TCADSheetTiling. }
+procedure CADPrintSheetTiledWin(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const APrinterName: String = ''; const ATitle: String = '';
+  const AOutputFile: String = '');
 { : Prints ASetup's pages of the model, the same way. }
 procedure CADPrintPagesWin(const ACAD: TFNCCADCmp2D;
   const ASetup: TCADPageSetup; const APrinterName: String = '';
@@ -1781,6 +1787,37 @@ begin
       const ACanvas: TDecorativeCanvas)
     begin
       CADDrawSheet(ACAD, ASheets[AIndex], ADevice, ACanvas);
+    end);
+end;
+
+procedure CADPrintSheetTiledWin(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const APrinterName: String; const ATitle: String;
+  const AOutputFile: String);
+var
+  TmpAcross, TmpDown: Integer;
+  TmpTiling: TCADSheetTiling;
+begin
+  if (ACAD = nil) or (ASheet = nil) then
+    Exit;
+  TmpTiling := ATiling;
+  { The page count has to be known before the job starts, so it comes from
+    the printer as it stands. The paper and orientation the job sets could
+    move its edges by a little; with margins above them, as the default's
+    10 mm are on an office printer, that changes nothing. }
+  CADSheetTileCount(ASheet, TmpTiling, CADPrinterPageDeviceWin(APrinterName),
+    TmpAcross, TmpDown);
+  PrintJob(APrinterName, ATitle, AOutputFile, 0, TmpAcross * TmpDown - 1,
+    procedure(const AIndex: Integer; out AOrientation: TCADPageOrientation;
+      out APaper: TCADPaperKind)
+    begin
+      AOrientation := TmpTiling.Orientation;
+      APaper := TmpTiling.Paper;
+    end,
+    procedure(const AIndex: Integer; const ADevice: TCADPageDevice;
+      const ACanvas: TDecorativeCanvas)
+    begin
+      CADDrawSheetTile(ACAD, ASheet, TmpTiling, ADevice, AIndex, ACanvas);
     end);
 end;
 

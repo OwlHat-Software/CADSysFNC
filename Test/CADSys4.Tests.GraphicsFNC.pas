@@ -219,6 +219,27 @@ type
     procedure ThePageRouteCarriesAlphaToo;
   end;
 
+  { : CS-20 through the real writers: a sheet with a viewport tiled into a
+    PDF, and through GDI onto Microsoft Print to PDF where that is here. }
+  [TestFixture]
+  TCADSheetTiledOutputTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FFile: string;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure APDFHasAPageOfTheTilingsPaperPerTile;
+    [Test]
+    procedure APDFOfASheetThatFitsIsOnePage;
+    [Test]
+    procedure APrinterGetsAPagePerTile;
+  end;
+
   { : CS-10: text that has to come out the same on every device -
     turned labels, and word-wrapped text measured before it is drawn. }
   [TestFixture]
@@ -2506,6 +2527,103 @@ begin
     'the resource');
 end;
 
+{ ==================================================================
+  TCADSheetTiledOutputTests
+  ================================================================== }
+
+procedure TCADSheetTiledOutputTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 100)));
+  FSheet := FCAD.Sheets.Add('Overview');
+  FSheet.Paper := pkA1;
+  FSheet.Orientation := pgoLandscape;
+  FSheet.AddViewport.RectMM := Rect2D(50, 50, 790, 540);
+  { Across the whole sheet, corner to corner, and along its middle. }
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 0), Point2D(841, 594)));
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(0, 297), Point2D(841, 297)));
+  FFile := TPath.Combine(TPath.GetTempPath, 'CADSysTiled.pdf');
+end;
+
+procedure TCADSheetTiledOutputTests.TearDown;
+begin
+  FCAD.Free;
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+end;
+
+procedure TCADSheetTiledOutputTests.APDFHasAPageOfTheTilingsPaperPerTile;
+var
+  TmpRaw, TmpLogs: string;
+  TmpRuns: TArray<TPDFRun>;
+begin
+  CADSaveSheetTiledToPDF(FCAD, FSheet, TCADSheetTiling.Default, FFile);
+  Assert.IsTrue(TFile.Exists(FFile), 'written');
+  TmpLogs := TPath.GetFullPath(ExtractFilePath(ParamStr(0)) + '..\..\logs');
+  if TDirectory.Exists(TmpLogs) then
+    TFile.Copy(FFile, TPath.Combine(TmpLogs, 'pdf-tiled.pdf'), True);
+  TmpRaw := TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile));
+  Assert.AreEqual(15, TRegEx.Matches(TmpRaw, '/Type/Page(?!s)').Count,
+    'five across, three down');
+  Assert.AreEqual(15, TRegEx.Matches(TmpRaw, '/MediaBox\[0 0 595 842\]').Count,
+    'each on A4');
+  TmpRuns := PDFTextRuns(PDFContent(FFile));
+  Assert.AreEqual(15, Length(TmpRuns), 'a name on each');
+end;
+
+procedure TCADSheetTiledOutputTests.APDFOfASheetThatFitsIsOnePage;
+var
+  TmpRaw: string;
+begin
+  FSheet.Paper := pkA4;
+  FSheet.Orientation := pgoPortrait;
+  CADSaveSheetTiledToPDF(FCAD, FSheet, TCADSheetTiling.Default, FFile);
+  TmpRaw := TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile));
+  Assert.AreEqual(1, TRegEx.Matches(TmpRaw, '/Type/Page(?!s)').Count, 'one');
+  Assert.AreEqual(0, Length(PDFTextRuns(PDFContent(FFile))), 'and no name');
+end;
+
+procedure TCADSheetTiledOutputTests.APrinterGetsAPagePerTile;
+const
+  PDFPrinter = 'Microsoft Print to PDF';
+var
+  TmpIC: HDC;
+  TmpRaw: string;
+  TmpBytes: TBytes;
+  I: Integer;
+begin
+  TmpIC := CreateIC('WINSPOOL', PDFPrinter, nil, nil);
+  if TmpIC = 0 then
+  begin
+    Assert.Pass(PDFPrinter + ' is not installed here');
+    Exit;
+  end;
+  DeleteDC(TmpIC);
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+  CADPrintSheetTiledWin(FCAD, FSheet, TCADSheetTiling.Default, PDFPrinter,
+    'CADSys tiled test', FFile);
+  { The spooler writes the file after EndDoc, in its own time. }
+  for I := 1 to 200 do
+  begin
+    if TFile.Exists(FFile) then
+      try
+        TmpBytes := TFile.ReadAllBytes(FFile);
+        if (Length(TmpBytes) > 0) and
+          (Pos('%%EOF', TEncoding.ANSI.GetString(TmpBytes)) > 0) then
+          Break;
+      except
+        { Still being written. }
+      end;
+    Sleep(100);
+  end;
+  Assert.IsTrue(Length(TmpBytes) > 0, 'the printer wrote the file');
+  TmpRaw := TEncoding.ANSI.GetString(TmpBytes);
+  Assert.IsTrue(Copy(TmpRaw, 1, 5) = '%PDF-', 'a PDF');
+  Assert.AreEqual(15, TRegEx.Matches(TmpRaw, '/MediaBox').Count,
+    'a page per tile');
+end;
+
 function TCADTextAgreementTests.Spec(const AHeight,
   AEscapement: Integer): TCADFontSpec;
 begin
@@ -2904,6 +3022,7 @@ TDUnitX.RegisterTestFixture(TCADTextAgreementTests);
 TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
 TDUnitX.RegisterTestFixture(TCADPDFPaperTests);
 TDUnitX.RegisterTestFixture(TCADPDFAlphaTests);
+TDUnitX.RegisterTestFixture(TCADSheetTiledOutputTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);

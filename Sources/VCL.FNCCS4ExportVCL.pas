@@ -102,6 +102,13 @@ procedure CADPrintSheets(const ACAD: TFNCCADCmp2D; const ASheets: TCADSheets;
   const APrinter: TPrinter; const AFirstSheet: Integer = 0;
   const ALastSheet: Integer = -1);
 
+{ : Prints ASheet tiled onto ATiling's paper at full size, one page per
+  tile with its marks. The orientation is ATiling's; the paper is whatever
+  APrinter has been set to, which has to agree with ATiling's. }
+procedure CADPrintSheetTiled(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const APrinter: TPrinter);
+
 implementation
 
 { : The millimetres-per-pixel of a device context. The one place that
@@ -313,6 +320,42 @@ begin
     end;
   except
     { A half-printed document left in the spooler is worse than none. }
+    APrinter.Abort;
+    Raise;
+  end;
+  APrinter.EndDoc;
+end;
+
+procedure CADPrintSheetTiled(const ACAD: TFNCCADCmp2D;
+  const ASheet: TCADSheet; const ATiling: TCADSheetTiling;
+  const APrinter: TPrinter);
+var
+  TmpDevice: TCADPageDevice;
+  TmpCanvas: TDecorativeCanvas;
+  TmpAcross, TmpDown, Cont: Integer;
+begin
+  if (ACAD = nil) or (ASheet = nil) or (APrinter = nil) then
+    Exit;
+  if ATiling.Orientation = pgoLandscape then
+    APrinter.Orientation := Vcl.Printers.poLandscape
+  else
+    APrinter.Orientation := Vcl.Printers.poPortrait;
+  APrinter.BeginDoc;
+  try
+    TmpDevice := CADPrinterPageDevice(APrinter);
+    CADSheetTileCount(ASheet, ATiling, TmpDevice, TmpAcross, TmpDown);
+    TmpCanvas := TDecorativeCanvas.Create(APrinter.Canvas);
+    try
+      for Cont := 0 to TmpAcross * TmpDown - 1 do
+      begin
+        if Cont > 0 then
+          APrinter.NewPage;
+        CADDrawSheetTile(ACAD, ASheet, ATiling, TmpDevice, Cont, TmpCanvas);
+      end;
+    finally
+      TmpCanvas.Free;
+    end;
+  except
     APrinter.Abort;
     Raise;
   end;
