@@ -12,4 +12,4 @@ from `0000-template.md`.
 | [0001](0001-work-by-the-workflow.md) | Work as described in `docs\claude-workflow.md` | Accepted |
 | [0002](0002-decision-records.md) | Choices are recorded as decision records | Accepted |
 | [0003](0003-work-on-master.md) | Work and build in the main folder, on `master` | Accepted |
-| [0004](0004-ci-on-a-public-repository.md) | CI, given that this repository is public | Proposed |
+| [0004](0004-ci-on-a-public-repository.md) | No CI, as this repository is public; `build.cmd` is the gate | Accepted |

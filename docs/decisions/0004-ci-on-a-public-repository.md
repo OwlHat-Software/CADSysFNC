@@ -1,6 +1,6 @@
 # 0004 - CI, given that this repository is public
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-05
 **Links:** -
 
@@ -28,11 +28,10 @@ compile this folder, and B's risk falls on the laptop that holds everything else
 added, is covered by checking `git status` before a commit and by building a clean clone before a push that matters.
 
 ## Decision
-(Waiting for Jacco.)
+Option A, chosen by Jacco Uijlenhoet on 2026-11-05: no CI, `build.cmd` in the main folder is the gate, push on request.
 
 ## Consequences
-- With A: no workflow file is added, and the existing rule stands: push on request, report "no CI".
-- With B: Jacco admits this repository to the runner group; Claude adds `.github\workflows\build.yml` and sets
-  `CADSYS_TMS` in it.
-- With C: Jacco changes the visibility; Claude then updates the README and adds the workflow as in B.
-- With D: Claude adds a small hosted workflow, and the gate stays local.
+- No workflow file is added. Push on request; report "no CI" rather than a CI result.
+- Check `git status` before a commit, and build a clean clone before a push that matters, because nothing else notices
+  a file that was not added.
+- No self-hosted runner on this repository without a new decision that amends this one.

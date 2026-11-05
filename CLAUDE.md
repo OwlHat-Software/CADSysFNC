@@ -22,8 +22,8 @@ The way of working is `docs\claude-workflow.md` (decision 0001). The short versi
   in the main folder: the applications compile against `Generated\FMX` here.
 - After a change run `build.cmd`; it must end with `BUILD OK, TESTS PASSED`. Logs are in `Tools\logs\`. Then check
   `git status` and commit to `master`.
-- **Push only when Jacco asks**: the repository is public. There is no CI (decision 0004, Proposed); report "no CI"
-  rather than a CI result. No self-hosted runner on this repository unless that decision says so.
+- **Push only when Jacco asks**: the repository is public. There is no CI (decision 0004); report "no CI" rather
+  than a CI result, and build a clean clone before a push that matters. No self-hosted runner on this repository.
 - Choices the developer should make: write a decision record in `docs\decisions` (status *Proposed*), give a
   recommendation, and ask. Do not build on a proposal before it is accepted.
 - Other repositories are not changed from here. What an application has to do after a library change goes on the list

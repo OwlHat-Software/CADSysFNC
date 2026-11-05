@@ -94,10 +94,10 @@ TMS FNC is looked for beside this folder (`..\TMS\Products`). A checkout elsewhe
 - After a green build: commit (one coherent change per commit, IDs in the message).
 - Push only when the developer asks. This repository is public: a push is a publication. The applications do not
   need one, as they read this folder.
-- **There is no CI yet.** The other repositories run CI on a self-hosted runner, which is not safe to copy to a
-  public repository as it stands, and GitHub's hosted runners have neither Delphi nor TMS FNC. The choice is in
-  decision 0004. Until it is made, `build.cmd` is the only check: report "no CI" rather than a CI result, and check
-  `git status` before a commit, because nothing else notices a file that was not added.
+- **There is no CI** (decision 0004). The other repositories run CI on a self-hosted runner, which is not safe to copy
+  to a public repository, and GitHub's hosted runners have neither Delphi nor TMS FNC. `build.cmd` is the only check:
+  report "no CI" rather than a CI result. Check `git status` before a commit and build a clean clone before a push
+  that matters, because nothing else notices a file that was not added.
 
 ## 8. Rules that saved time
 
@@ -126,4 +126,4 @@ Not used from Masterplanner's workflow: requirements and an implementation plan 
 (the library exists to draw through them; the FMX build, which leaves out the Vcl namespaces, does that job), scripted
 UI checks and screenshots, and an installer.
 
-Open: CI (decision 0004).
+Also not used: CI (decision 0004).
