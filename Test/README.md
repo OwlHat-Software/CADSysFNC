@@ -5,8 +5,8 @@ DUnitX that ships with the IDE (`$(BDS)\source\DUnitX`).
 
 | Project | Covers | Last run |
 |---|---|---|
-| `CADSys4Tests` | the library: geometry, structures, shapes, JSON, DXF, the legacy reader, saved views, the page model, sheets, the drawing layer and its VCL backend | 716 found, 709 passed, 0 failed, 7 ignored |
-| `CADSysFNCTests` | the FNC backend, drawn into a `TTMSFNCGraphics` bitmap | 72 / 72 |
+| `CADSys4Tests` | the library: geometry, structures, shapes, JSON, DXF, the legacy reader, saved views, the page model, sheets, the drawing layer and its VCL backend | 727 found, 720 passed, 0 failed, 7 ignored |
+| `CADSysFNCTests` | the FNC backend, drawn into a `TTMSFNCGraphics` bitmap | 75 / 75 |
 
 Both need TMS FNC Core to compile: the main suite links the library's registration unit, which uses it.
 

@@ -51,7 +51,7 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-17 | **EMF: uneven glyph spacing, text overflow** at the 600 dpi layout (found in WP-0.2) | Must | MP-OUT-004 | Done (7b15de7) |
 | CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Done (7b15de7) |
 | CS-19 | **PDF: an empty clip path** before every clip (found in WP-5.1) | Could | MP-OUT-001 | Open |
-| CS-20 | **Print one sheet tiled** over smaller pages, with overlap and assembly marks (WP-5.2) | Must | MP-OUT-002 | Open |
+| CS-20 | **Print one sheet tiled** over smaller pages, with overlap and assembly marks (WP-5.2) | Must | MP-OUT-002 | Done (d519b1f) |
 | CS-21 | **PDF: alpha of a fill or pen is lost** - translucent colours come out opaque (found in WP-5.3) | Must | MP-MRK-003, MP-OUT-001 | Done (09cf326) |
 
 ---
@@ -458,6 +458,8 @@ and the outputs on top of it: `CADPrintSheetTiledFMX(ACAD, ASheet, ATiling, ATit
 **Test:** an A1 landscape sheet (841 x 594) tiled on A4 portrait (printable 190 x 277 at 10 mm margins), overlap 10: `CADSheetTileCount` gives 5 across, 3 down; the tiles' sheet windows overlap by exactly 10 mm and together cover the sheet; tile 0 is the top left. A sheet of A4 on A4 gives 1 page and no marks. A tiled PDF of the WP-0.1 spike's sheet shows the marks and the tile names.
 
 **Masterplanner side** (after the library has it): a *Print tiled...* choice next to *Print...* for one sheet, with the printer's paper, orientation and overlap, and the page count shown before printing.
+
+**Done as (`d519b1f`):** the change, with `CADSheetTileWindow` public as well and the VCL equivalent as `CADPrintSheetTiled`; `CADPrintSheetTiledWin` underneath the FMX one. Two things this section did not settle. `TCADSheetTiling` has `Margins` as well, default 10 mm, because the test's printable area needs them and `TCADPageDevice` knows only a printer's left and top edges: those raise the margins on their own side and the opposite one. And whether a sheet fits is judged against the paper and not the printable area, so that A4 on A4 is one page, as an ordinary print. The cut lines are drawn as pieces and not with a dashed pen, whose dash at a hairline is too fine to cut along. Each page's stream holds the whole sheet, clipped: the 15 pages of the test's sheet are 96 kB, but a heavy sheet multiplies by its page count. Checked: the test above in both suites; the tiled PDF rendered with Windows.Data.Pdf from the VCL and from FMX; a real job on Microsoft Print to PDF, 15 pages. Not checked: a physical printer, taping pages together, and the WP-0.1 spike's sheet, which is in Masterplanner.
 
 ## 23. CS-21 — PDF: the alpha of a fill or pen is lost (Must)
 

@@ -7,13 +7,13 @@ surface underneath.
 
 | Output | Unit | Frameworks | Routines |
 |---|---|---|---|
-| PDF | `FNCCS4PDF` | VCL, FMX, LCL | `CADSaveSheetsToPDF`, `CADSavePagesToPDF`, `CADAddPDFLinks` |
+| PDF | `FNCCS4PDF` | VCL, FMX, LCL | `CADSaveSheetsToPDF`, `CADSavePagesToPDF`, `CADSaveSheetTiledToPDF`, `CADAddPDFLinks` |
 | PNG | `FNCCS4Image` | VCL, FMX | `CADSaveSheetToImage`, `CADSaveSheetToPNGStream`, `CADSaveModelRectToImage`, `CADSaveModelRectToPNGStream` |
 | SVG | `FNCCS4SVG` | VCL, FMX, LCL | `CADSaveSheetsToSVG`, `CADSaveSheetToSVGStream`, `TCADSVGGraphics` |
 | EMF | `FNCCS4GDI` | VCL, FMX (Windows) | `CADSheetToEMF`, `CADModelRectToEMF`, `CADSaveSheetToEMF` |
 | Clipboard | `FNCCS4GDI` | VCL, FMX (Windows) | `CADCopySheetToClipboardWin`, `CADCopyModelRectToClipboardWin` |
-| Printer | `FNCCS4GDI` | VCL, FMX (Windows) | `CADPrintSheetsWin`, `CADPrintPagesWin` |
-| Printer | `FNCCS4PrintFMX` | FMX | `CADPrintSheetsFMX`, `CADPrintPagesFMX`, `CADFMXPrinterPageDevice` |
+| Printer | `FNCCS4GDI` | VCL, FMX (Windows) | `CADPrintSheetsWin`, `CADPrintPagesWin`, `CADPrintSheetTiledWin` |
+| Printer | `FNCCS4PrintFMX` | FMX | `CADPrintSheetsFMX`, `CADPrintPagesFMX`, `CADPrintSheetTiledFMX`, `CADFMXPrinterPageDevice` |
 | Printer, clipboard bitmap | `FNCCS4ExportVCL` | VCL | `CADPrintSheets`, `CADPrintPages` (Vcl.Printers), `CADCopyToClipboard` |
 
 The unit names carry the framework prefix of the tree they were generated
@@ -100,6 +100,32 @@ gets the same metafile and printing the VCL has always had.
   `CADPrintSheetsFMX` prints on FMX's active printer through the same
   routines; copies and other settings made on FMX's printer object are not
   carried over.
+
+## A sheet over smaller pages
+
+An A0 overview out of an office printer, at full size, as pages to tape together:
+
+```pascal
+Tiling := TCADSheetTiling.Default;   { A4 portrait, 10 mm margins and overlap, marks }
+CADSheetTileCount(Sheet, Tiling, Device, Across, Down);
+CADSaveSheetTiledToPDF(CAD, Sheet, Tiling, 'overview.pdf');
+CADPrintSheetTiledFMX(CAD, Sheet, Tiling, 'Overview');
+```
+
+Tiles run left to right, then top to bottom, each overlapping the next by
+`OverlapMM`. A page's right and bottom overlap go under its neighbours: a dashed
+cut line with a tick at each end shows where their edge comes, registration
+crosses at the corners of each overlap let two pages be laid on each other, and
+each page carries its name, its grid and the sheet's name ("B2   A1 - E3   Overview").
+The marks are on the page and not on the sheet, so no other output shows them. A
+sheet no larger than the paper is one page without marks.
+
+`Margins` keeps each page clear. A printer's left and top edges raise them on
+their own side and the opposite one, as far as the device knows them; a printer
+with a wider right or bottom edge needs them set by hand. `CADPrintSheetTiled`
+on the VCL takes the paper from the printer as it is set, so that has to agree
+with the tiling. Every page holds the whole sheet, clipped, so a heavy sheet
+makes a large PDF.
 
 ## The viewport draw hook
 
