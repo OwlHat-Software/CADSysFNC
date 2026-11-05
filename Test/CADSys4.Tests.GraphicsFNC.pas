@@ -19,7 +19,7 @@ uses
   VCL.FNCCS4BaseTypes, VCL.FNCCS4Graphics, VCL.FNCCS4GraphicsFNC,
   VCL.FNCCADSys4, VCL.FNCCS4Shapes, VCL.FNCCadSysRegister,
   VCL.FNCCS4Paper, VCL.FNCCS4Image, Vcl.Imaging.pngimage, VCL.FNCCS4SVG,
-  VCL.FNCCS4GDI, VCL.FNCCS4PDF, VCL.FNCCS4GraphicsVCL, System.IOUtils, System.RegularExpressions, System.ZLib, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
+  VCL.FNCCS4GDI, VCL.FNCCS4PDF, VCL.FNCCS4Print,VCL.FNCCS4GraphicsVCL, System.IOUtils, System.RegularExpressions, System.ZLib, Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom, Xml.omnixmldom;
 
 type
   { : CS-04: a sheet, or a rectangle of the model, as a PNG. Here rather
@@ -187,6 +187,36 @@ type
     procedure AGradientIsPaintedInBandsInsideItsShape;
     [Test]
     procedure TurnedTextLandsWhereItIsAnchored;
+  end;
+
+  { : CS-21: a colour's alpha reaches the PDF. FNC's PDF library writes no
+    transparency of its own, so these read back what the library adds:
+    the gs in the content stream and the ExtGState on the page. If a new
+    FNC Core renames the field TCADPDFGraphics reaches its writer through,
+    the first of these is what fails. }
+  [TestFixture]
+  TCADPDFAlphaTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FFile: string;
+    function AddProbe(const AMode: Integer): TCADSheet;
+    function RawFile: string;
+    function Alpha(const AName, AKey, ARaw: string): Double;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure ATranslucentFillPenAndTextCarryTheirAlpha;
+    [Test]
+    procedure AnOpaquePageWritesNoGraphicsState;
+    [Test]
+    procedure AGradientInterpolatesItsAlphaPerBand;
+    [Test]
+    procedure LinksAndAlphaGoOnTheSamePage;
+    [Test]
+    procedure ThePageRouteCarriesAlphaToo;
   end;
 
   { : CS-10: text that has to come out the same on every device -
@@ -2261,6 +2291,221 @@ end;
   TCADTextAgreementTests
   ================================================================== }
 
+{ ==================================================================
+  TCADPDFAlphaTests
+  ================================================================== }
+
+type
+  { : Paints what CS-21 asks about. Mode 0: a black line under a 50 % grey
+    rectangle at alpha $38, a pen at alpha $80 and text at alpha $40.
+    Mode 1: the same, opaque. Mode 2: a gradient from alpha $20 to $E0. }
+  TPDFAlphaProbe2D = class(TLine2D)
+  public
+    Mode: Integer;
+    procedure Draw(const VT: TTransf2D; const Cnv: TDecorativeCanvas;
+      const ClipRect2D: TRect2D; const DrawMode: Integer); override;
+  end;
+
+procedure TPDFAlphaProbe2D.Draw(const VT: TTransf2D;
+  const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D;
+  const DrawMode: Integer);
+
+  function P(const X, Y: Double): TPoint;
+  begin
+    Result := Point2DToPoint(TransformPoint2D(Point2D(X, Y), VT));
+  end;
+
+  function A(const AAlpha: Byte): Byte;
+  begin
+    if Mode = 1 then
+      Result := 255
+    else
+      Result := AAlpha;
+  end;
+
+var
+  G: TCADGraphics;
+  TmpSpec: TCADFontSpec;
+  TmpR: TRect;
+begin
+  G := Cnv.Graphics;
+  if Mode = 2 then
+  begin
+    G.Pen.Style := cpsClear;
+    G.Brush.Style := cbsGradient;
+    G.Brush.Color := CADColor($20, 255, 0, 0);
+    G.Brush.Color2 := CADColor($E0, 255, 0, 0);
+    G.Brush.GradientVertical := False;
+    G.Rectangle(P(20, 270).X, P(20, 270).Y, P(190, 200).X, P(190, 200).Y);
+    G.Brush.Style := cbsClear;
+    G.Pen.Style := cpsSolid;
+    Exit;
+  end;
+  { The line the rectangle has to let through. }
+  G.Brush.Style := cbsClear;
+  G.Pen.Style := cpsSolid;
+  G.Pen.Width := 20;
+  G.Pen.Color := cadclBlack;
+  G.MoveTo(P(20, 250).X, P(20, 250).Y);
+  G.LineTo(P(190, 250).X, P(190, 250).Y);
+  G.Pen.Style := cpsClear;
+  G.Brush.Style := cbsSolid;
+  G.Brush.Color := CADColor(A($38), 128, 128, 128);
+  G.Rectangle(P(60, 270).X, P(60, 270).Y, P(150, 230).X, P(150, 230).Y);
+  G.Brush.Style := cbsClear;
+  { The pen. }
+  G.Pen.Style := cpsSolid;
+  G.Pen.Color := CADColor(A($80), 0, 0, 255);
+  G.MoveTo(P(20, 200).X, P(20, 200).Y);
+  G.LineTo(P(190, 200).X, P(190, 200).Y);
+  { The text. }
+  TmpSpec := TCADFontSpec.Default;
+  TmpSpec.FaceName := 'Arial';
+  TmpSpec.Height := -200;
+  G.SelectFont(TmpSpec);
+  G.FontColor := CADColor(A($40), 0, 0, 0);
+  G.Transparent := True;
+  TmpR := Rect(P(20, 180).X, P(20, 180).Y, P(190, 150).X, P(190, 150).Y);
+  G.DrawText('Translucent', TmpR, CAD_DT_SINGLELINE);
+  G.ResetFont;
+end;
+
+function TCADPDFAlphaTests.AddProbe(const AMode: Integer): TCADSheet;
+var
+  TmpProbe: TPDFAlphaProbe2D;
+begin
+  Result := FCAD.Sheets.Add('Paper');
+  Result.Paper := pkA4;
+  Result.Orientation := pgoPortrait;
+  TmpProbe := TPDFAlphaProbe2D.Create(-1, Point2D(1, 1), Point2D(209, 296));
+  TmpProbe.Mode := AMode;
+  Result.AddObject(TmpProbe);
+end;
+
+function TCADPDFAlphaTests.RawFile: string;
+begin
+  Assert.IsTrue(TFile.Exists(FFile), 'written');
+  Result := TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile));
+end;
+
+{ : The value under AKey of the graphics state AName in the file's
+  resources; a failure when there is none. }
+function TCADPDFAlphaTests.Alpha(const AName, AKey, ARaw: string): Double;
+var
+  TmpMatch: TMatch;
+begin
+  TmpMatch := TRegEx.Match(ARaw, '/' + AName + '\s*<<[^>]*/' + AKey +
+    '\s+([0-9.]+)');
+  Assert.IsTrue(TmpMatch.Success, AName + ' is in the resources');
+  Result := StrToFloat(TmpMatch.Groups[1].Value, TFormatSettings.Invariant);
+end;
+
+procedure TCADPDFAlphaTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FFile := TPath.Combine(TPath.GetTempPath, 'CADSysPDFAlpha.pdf');
+end;
+
+procedure TCADPDFAlphaTests.TearDown;
+begin
+  FCAD.Free;
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+end;
+
+procedure TCADPDFAlphaTests.ATranslucentFillPenAndTextCarryTheirAlpha;
+var
+  TmpContent, TmpRaw, TmpLogs: string;
+begin
+  AddProbe(0);
+  CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile);
+  { A copy beside the build logs, to render and look at. }
+  TmpLogs := TPath.GetFullPath(ExtractFilePath(ParamStr(0)) + '..\..\logs');
+  if TDirectory.Exists(TmpLogs) then
+    TFile.Copy(FFile, TPath.Combine(TmpLogs, 'pdf-alpha.pdf'), True);
+  TmpContent := PDFContent(FFile);
+  TmpRaw := RawFile;
+  { Each inside a q of its own, so that it ends with its shape. }
+  Assert.IsTrue(TRegEx.IsMatch(TmpContent, 'q\s+/CADf38 gs'), 'the fill');
+  Assert.IsTrue(TRegEx.IsMatch(TmpContent, 'q\s+/CADs80 gs'), 'the pen');
+  Assert.IsTrue(TRegEx.IsMatch(TmpContent, 'q\s+/CADf40 gs'), 'the text');
+  Assert.IsTrue(Abs(Alpha('CADf38', 'ca', TmpRaw) - 0.22) <= 0.005,
+    'the fill''s /ca');
+  Assert.IsTrue(Abs(Alpha('CADs80', 'CA', TmpRaw) - 0.502) <= 0.005,
+    'the pen''s /CA');
+  Assert.IsTrue(Abs(Alpha('CADf40', 'ca', TmpRaw) - 0.251) <= 0.005,
+    'the text''s /ca');
+  Assert.AreEqual(1, CountOf('/ExtGState<<', TmpRaw), 'on the one page');
+end;
+
+procedure TCADPDFAlphaTests.AnOpaquePageWritesNoGraphicsState;
+var
+  TmpRaw: string;
+begin
+  AddProbe(1);
+  CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile);
+  TmpRaw := RawFile;
+  Assert.AreEqual(0, CountOf(' gs', PDFContent(FFile)), 'no gs');
+  Assert.AreEqual(0, CountOf('/ExtGState', TmpRaw), 'no resource');
+  Assert.AreEqual(1, CountOf('%%EOF', TmpRaw), 'and no update of the file');
+end;
+
+procedure TCADPDFAlphaTests.AGradientInterpolatesItsAlphaPerBand;
+var
+  TmpContent: string;
+  TmpMatch: TMatch;
+  TmpSeen: TStringList;
+begin
+  AddProbe(2);
+  CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile);
+  TmpContent := PDFContent(FFile);
+  Assert.IsTrue(Pos('/CADf20 gs', TmpContent) > 0, 'the first band''s alpha');
+  Assert.IsTrue(Pos('/CADfE0 gs', TmpContent) > 0, 'the last band''s alpha');
+  TmpSeen := TStringList.Create;
+  try
+    TmpSeen.Sorted := True;
+    TmpSeen.Duplicates := dupIgnore;
+    for TmpMatch in TRegEx.Matches(TmpContent, '/CADf[0-9A-F]{2} gs') do
+      TmpSeen.Add(TmpMatch.Value);
+    Assert.IsTrue(TmpSeen.Count > 100,
+      Format('%d alphas across the bands', [TmpSeen.Count]));
+  finally
+    TmpSeen.Free;
+  end;
+end;
+
+procedure TCADPDFAlphaTests.LinksAndAlphaGoOnTheSamePage;
+var
+  TmpRaw: string;
+begin
+  AddProbe(0);
+  CADSaveSheetsToPDF(FCAD, FCAD.Sheets, FFile, 0, -1,
+    function(const ASheet: TCADSheet; const AIndex: Integer): TCADPDFLinks
+    begin
+      Result := [TCADPDFLink.Create(Rect2D(10, 20, 60, 40),
+        'https://example.com/plan')];
+    end);
+  TmpRaw := RawFile;
+  Assert.AreEqual(2, CountOf('%%EOF', TmpRaw), 'one update for the two');
+  { The page as updated carries both: a reader takes the newest. }
+  Assert.IsTrue(TRegEx.IsMatch(TmpRaw,
+    '/Type/Page(?!s)[^\r\n]*/Annots\[[^\]]*\d+ 0 R[^\r\n]*/ExtGState<<'),
+    'the link and the alpha on one page dictionary');
+end;
+
+procedure TCADPDFAlphaTests.ThePageRouteCarriesAlphaToo;
+var
+  TmpProbe: TPDFAlphaProbe2D;
+begin
+  TmpProbe := TPDFAlphaProbe2D.Create(-1, Point2D(1, 1), Point2D(209, 296));
+  TmpProbe.Mode := 0;
+  FCAD.AddObject(-1, TmpProbe);
+  CADSavePagesToPDF(FCAD, TCADPageSetup.Default, FFile);
+  Assert.IsTrue(Pos('/CADf38 gs', PDFContent(FFile)) > 0, 'the gs');
+  Assert.IsTrue(Abs(Alpha('CADf38', 'ca', RawFile) - 0.22) <= 0.005,
+    'the resource');
+end;
+
 function TCADTextAgreementTests.Spec(const AHeight,
   AEscapement: Integer): TCADFontSpec;
 begin
@@ -2658,6 +2903,7 @@ TDUnitX.RegisterTestFixture(TCADImageExportTests);
 TDUnitX.RegisterTestFixture(TCADTextAgreementTests);
 TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
 TDUnitX.RegisterTestFixture(TCADPDFPaperTests);
+TDUnitX.RegisterTestFixture(TCADPDFAlphaTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);

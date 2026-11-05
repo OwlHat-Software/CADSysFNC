@@ -209,7 +209,27 @@ type
     lets the text grow towards, and the text kept to one line, as FNC
     keeps turned text. That needs the
     page height the library flips against, which the save routines set
-    as PageHeight; with none set the engine's own path is used. }
+    as PageHeight; with none set the engine's own path is used.
+
+    TRANSLUCENT COLOURS (CS-21)
+
+    FNC's PDF library writes no transparency: the engine is given the
+    colour's opacity and nothing reaches the file, so a fill at 22 % came
+    out solid. PDF keeps it in a graphics state. So a shape, line or text
+    whose colour has alpha is drawn inside q ... Q with its state selected
+    by gs - /CADfAA for a fill or text (/ca) and /CADsAA for a pen (/CA),
+    AA the alpha in hex, one of each per alpha - and an opaque one exactly
+    as before. A gradient's alpha is worked out per band, so its bands do
+    not overlap unless both colours are opaque.
+
+    Neither half has a public way in. The operator has to go into the
+    page's content stream as it is written, and the library's writer is
+    the private field FOutput of the graphics library, reached through
+    RTTI (PDFLibWriter). If a new FNC Core renames it there is no writer,
+    and colours come out opaque as they did before: TCADPDFAlphaTests is
+    what notices. The resources are added after the file is written, in
+    the same incremental update as the links (PDFUpdatePages), because a
+    page's resources are written before its content is known. }
   TCADPDFGraphics = class(TCADFNCGraphics)
   private
     fLib: ITMSFNCCustomPDFGraphicsLib;
@@ -217,6 +237,18 @@ type
     fPageHeight: Single;
     fFontSpec: TCADFontSpec;
     fHaveFont: Boolean;
+    fWriter: TObject;
+    fFillAlphas, fPenAlphas: set of Byte;
+    function BrushAlpha: Byte;
+    function PenAlpha: Byte;
+    function BeginAlpha(const AFill, APen: Byte): Boolean;
+    procedure EndAlpha(const AActive: Boolean);
+    procedure PlainPolygon(const Pts: Pointer; const Count: Integer);
+    procedure PlainRectangle(const X1, Y1, X2, Y2: Integer);
+    procedure PlainEllipse(const X1, Y1, X2, Y2: Integer);
+    procedure PlainFillRect(const R: TRect);
+    function PlainText(const Text: string; var R: TRect;
+      const Flags: Cardinal): Integer;
     function Dashes: TCADDashPattern;
     procedure StrokeDashed(const APts: array of TPoint; const AClosed: Boolean;
       const APattern: TCADDashPattern);
@@ -241,6 +273,9 @@ type
       the page is drawn in - set per page by the save routines. 0 leaves
       turned text to FNC's engine. }
     property PageHeight: Single read fPageHeight write fPageHeight;
+    { : The graphics states drawn with so far, as the inside of a page's
+      /ExtGState dictionary; '' for none. See TRANSLUCENT COLOURS. }
+    function ExtGStates: String;
     procedure MoveTo(const X, Y: Integer); override;
     procedure LineTo(const X, Y: Integer); override;
     procedure Polyline(const Pts: Pointer; const Count: Integer); overload;
@@ -310,8 +345,19 @@ implementation
 
 {$IFNDEF CADSYS_LCL}
 uses
-  System.RegularExpressions;
+  System.RegularExpressions, System.Rtti,
+{$IFDEF CADSYS_FMX}
+  FMX.TMSFNCPDFCoreLibBase;
+{$ELSE}
+  VCL.TMSFNCPDFCoreLibBase;
 {$ENDIF}
+{$ENDIF}
+
+{ : Adds to a PDF already written, as one incremental update: APageLinks[I]
+  on page I and, when AExtGStates is not empty, those graphics states on
+  every page. See LINKS and TRANSLUCENT COLOURS. }
+procedure PDFUpdatePages(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks; const AExtGStates: String); forward;
 
 class function TCADPDFLink.Create(const ARectMM: TRect2D;
   const AURL: String): TCADPDFLink;
@@ -344,6 +390,177 @@ begin
     drawing call is a no-op. }
   inherited Create(nil, Rect(0, 0, 0, 0));
   fLib := ALib;
+end;
+
+function TCADPDFGraphics.BrushAlpha: Byte;
+begin
+  Result := CADColorAlpha(Brush.Color);
+  { Nothing painted, so nothing to carry: FNC is told so already. }
+  if (Brush.Style = cbsClear) or (Result = 0) then
+    Result := 255;
+end;
+
+function TCADPDFGraphics.PenAlpha: Byte;
+begin
+  Result := CADColorAlpha(Pen.Color);
+  if (Pen.Mode <> cpmCopy) or (Pen.Style = cpsClear) or (Result = 0) then
+    Result := 255;
+end;
+
+{ : The library's writer - see TRANSLUCENT COLOURS. nil when it cannot be
+  reached, which leaves colours opaque. }
+function PDFLibWriter(const ALib: ITMSFNCCustomPDFGraphicsLib): TObject;
+{$IFNDEF CADSYS_LCL}
+var
+  TmpContext: TRttiContext;
+  TmpField: TRttiField;
+{$ENDIF}
+begin
+  Result := nil;
+{$IFNDEF CADSYS_LCL}
+  TmpField := TmpContext.GetType((ALib as TObject).ClassType)
+    .GetField('FOutput');
+  if TmpField <> nil then
+  begin
+    Result := TmpField.GetValue(ALib as TObject).AsObject;
+    if not(Result is TTMSFNCPDFGraphicsLibOutputWriter) then
+      Result := nil;
+  end;
+{$ENDIF}
+end;
+
+function TCADPDFGraphics.BeginAlpha(const AFill, APen: Byte): Boolean;
+begin
+  Result := False;
+  if (fLib = nil) or (FNCGraphics = nil) or
+    ((AFill = 255) and (APen = 255)) then
+    Exit;
+  { Looked for here, not when created: the document makes it. }
+  if fWriter = nil then
+    fWriter := PDFLibWriter(fLib);
+  if fWriter = nil then
+    Exit;
+{$IFNDEF CADSYS_LCL}
+  fLib.DrawSaveState;
+  if AFill < 255 then
+  begin
+    Include(fFillAlphas, AFill);
+    TTMSFNCPDFGraphicsLibOutputWriter(fWriter).WriteString('/CADf' +
+      IntToHex(Integer(AFill), 2) + ' gs'#13#10);
+  end;
+  if APen < 255 then
+  begin
+    Include(fPenAlphas, APen);
+    TTMSFNCPDFGraphicsLibOutputWriter(fWriter).WriteString('/CADs' +
+      IntToHex(Integer(APen), 2) + ' gs'#13#10);
+  end;
+  Result := True;
+{$ENDIF}
+end;
+
+procedure TCADPDFGraphics.EndAlpha(const AActive: Boolean);
+begin
+  if AActive then
+    fLib.DrawRestoreState;
+end;
+
+function TCADPDFGraphics.ExtGStates: String;
+
+  { Worked out in whole numbers, so that no locale's decimal comma gets
+    into the file. An alpha here is below 255, so it is below one. }
+  function Num(const AAlpha: Integer): String;
+  begin
+    Result := Format('0.%.4d', [AAlpha * 10000 div 255]);
+  end;
+
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to 254 do
+  begin
+    if I in fFillAlphas then
+      Result := Result + '/CADf' + IntToHex(I, 2) + '<</Type/ExtGState/ca ' +
+        Num(I) + '>>';
+    if I in fPenAlphas then
+      Result := Result + '/CADs' + IntToHex(I, 2) + '<</Type/ExtGState/CA ' +
+        Num(I) + '>>';
+  end;
+end;
+
+procedure TCADPDFGraphics.PlainPolygon(const Pts: Pointer;
+  const Count: Integer);
+var
+  TmpActive: Boolean;
+begin
+  TmpActive := BeginAlpha(BrushAlpha, PenAlpha);
+  try
+    inherited DoPolygon(Pts, Count);
+  finally
+    EndAlpha(TmpActive);
+  end;
+end;
+
+procedure TCADPDFGraphics.PlainRectangle(const X1, Y1, X2, Y2: Integer);
+var
+  TmpActive: Boolean;
+begin
+  TmpActive := BeginAlpha(BrushAlpha, PenAlpha);
+  try
+    inherited DoRectangle(X1, Y1, X2, Y2);
+  finally
+    EndAlpha(TmpActive);
+  end;
+end;
+
+procedure TCADPDFGraphics.PlainEllipse(const X1, Y1, X2, Y2: Integer);
+var
+  TmpActive: Boolean;
+begin
+  TmpActive := BeginAlpha(BrushAlpha, PenAlpha);
+  try
+    inherited DoEllipse(X1, Y1, X2, Y2);
+  finally
+    EndAlpha(TmpActive);
+  end;
+end;
+
+procedure TCADPDFGraphics.PlainFillRect(const R: TRect);
+var
+  TmpActive: Boolean;
+begin
+  TmpActive := BeginAlpha(BrushAlpha, 255);
+  try
+    inherited DoFillRect(R);
+  finally
+    EndAlpha(TmpActive);
+  end;
+end;
+
+function TCADPDFGraphics.PlainText(const Text: string; var R: TRect;
+  const Flags: Cardinal): Integer;
+var
+  TmpAlpha: Byte;
+  TmpTransparent, TmpActive: Boolean;
+begin
+  TmpAlpha := CADColorAlpha(FontColor);
+  if (TmpAlpha = 255) or ((Flags and CAD_DT_CALCRECT) <> 0) then
+  begin
+    Result := inherited DrawText(Text, R, Flags);
+    Exit;
+  end;
+  { The text's alpha is not the background's: that goes first, by itself. }
+  TmpTransparent := Transparent;
+  if not TmpTransparent then
+    FillRect(R);
+  Transparent := True;
+  TmpActive := BeginAlpha(TmpAlpha, 255);
+  try
+    Result := inherited DrawText(Text, R, Flags);
+  finally
+    EndAlpha(TmpActive);
+    Transparent := TmpTransparent;
+  end;
 end;
 
 procedure TCADPDFGraphics.DoPushClip(const R: TRect);
@@ -418,10 +635,18 @@ end;
 procedure TCADPDFGraphics.LineTo(const X, Y: Integer);
 var
   TmpDashes: TCADDashPattern;
+  TmpActive: Boolean;
 begin
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
-    inherited LineTo(X, Y)
+  begin
+    TmpActive := BeginAlpha(255, PenAlpha);
+    try
+      inherited LineTo(X, Y);
+    finally
+      EndAlpha(TmpActive);
+    end;
+  end
   else
   begin
     StrokeDashed([fCur, Point(X, Y)], False, TmpDashes);
@@ -434,13 +659,21 @@ procedure TCADPDFGraphics.Polyline(const Pts: Pointer; const Count: Integer);
 var
   TmpDashes: TCADDashPattern;
   TmpPts: array of TPoint;
+  TmpActive: Boolean;
   I: Integer;
 begin
   if (Pts = nil) or (Count <= 0) then
     Exit;
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
-    inherited Polyline(Pts, Count)
+  begin
+    TmpActive := BeginAlpha(255, PenAlpha);
+    try
+      inherited Polyline(Pts, Count);
+    finally
+      EndAlpha(TmpActive);
+    end;
+  end
   else
   begin
     SetLength(TmpPts, Count);
@@ -488,14 +721,14 @@ begin
   TmpDashes := Dashes;
   if (Length(TmpDashes) = 0) or (Pts = nil) or (Count <= 0) then
   begin
-    inherited DoPolygon(Pts, Count);
+    PlainPolygon(Pts, Count);
     Exit;
   end;
   { The fill alone, then the dashed outline. }
   TmpStyle := Pen.Style;
   Pen.Style := cpsClear;
   try
-    inherited DoPolygon(Pts, Count);
+    PlainPolygon(Pts, Count);
   finally
     Pen.Style := TmpStyle;
   end;
@@ -531,14 +764,14 @@ begin
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
   begin
-    inherited DoRectangle(X1, Y1, X2, Y2);
+    PlainRectangle(X1, Y1, X2, Y2);
     Exit;
   end;
   { The fill alone, then the dashed outline. }
   TmpStyle := Pen.Style;
   Pen.Style := cpsClear;
   try
-    inherited DoRectangle(X1, Y1, X2, Y2);
+    PlainRectangle(X1, Y1, X2, Y2);
   finally
     Pen.Style := TmpStyle;
   end;
@@ -572,14 +805,14 @@ begin
   TmpDashes := Dashes;
   if Length(TmpDashes) = 0 then
   begin
-    inherited DoEllipse(X1, Y1, X2, Y2);
+    PlainEllipse(X1, Y1, X2, Y2);
     Exit;
   end;
   { The fill alone, then the dashed outline. }
   TmpStyle := Pen.Style;
   Pen.Style := cpsClear;
   try
-    inherited DoEllipse(X1, Y1, X2, Y2);
+    PlainEllipse(X1, Y1, X2, Y2);
   finally
     Pen.Style := TmpStyle;
   end;
@@ -605,13 +838,13 @@ begin
       Point(R.Left, R.Bottom)], False, R);
     Exit;
   end;
-  inherited DoFillRect(R);
+  PlainFillRect(R);
 end;
 
 function TCADPDFGraphics.GradientActive: Boolean;
 begin
   Result := (fLib <> nil) and (Brush.Style = cbsGradient) and
-    (CADColorAlpha(Brush.Color) <> 0);
+    ((CADColorAlpha(Brush.Color) <> 0) or (CADColorAlpha(Brush.Color2) <> 0));
 end;
 
 procedure TCADPDFGraphics.GradientFill(const APts: array of TPoint;
@@ -639,13 +872,14 @@ begin
     Exit;
   { A band per step of the channel that changes most - more could not
     be told apart - and never thinner than a dot. }
-  TmpDiff := Max(Max(Abs(Channel(TmpFrom, 16) - Channel(TmpTo, 16)),
+  TmpDiff := Max(Max(Max(Abs(Channel(TmpFrom, 16) - Channel(TmpTo, 16)),
     Abs(Channel(TmpFrom, 8) - Channel(TmpTo, 8))),
-    Abs(Channel(TmpFrom, 0) - Channel(TmpTo, 0)));
+    Abs(Channel(TmpFrom, 0) - Channel(TmpTo, 0))),
+    Abs(Channel(TmpFrom, 24) - Channel(TmpTo, 24)));
   TmpN := Max(1, Min(TmpExtent, Min(256, TmpDiff + 1)));
   { Opaque bands overlap by a dot so that no seam shows between them;
     translucent ones must not, or the overlap would show darker. }
-  if CADColorAlpha(TmpFrom) = 255 then
+  if (CADColorAlpha(TmpFrom) = 255) and (CADColorAlpha(TmpTo) = 255) then
     TmpOverlap := 1
   else
     TmpOverlap := 0;
@@ -678,8 +912,9 @@ begin
           T := 0
         else
           T := I / (TmpN - 1);
-        { The alpha is the first colour's, as on every other backend. }
-        Brush.Color := TCADColor((CADColorAlpha(TmpFrom) shl 24) or
+        { The alpha too: on paper a band can carry its own (CS-21). }
+        Brush.Color := TCADColor((Cardinal(Round(Channel(TmpFrom, 24) + T *
+          (Channel(TmpTo, 24) - Channel(TmpFrom, 24)))) shl 24) or
           (Round(Channel(TmpFrom, 16) + T * (Channel(TmpTo, 16) -
           Channel(TmpFrom, 16))) shl 16) or
           (Round(Channel(TmpFrom, 8) + T * (Channel(TmpTo, 8) -
@@ -696,7 +931,7 @@ begin
         else
           TmpBand := Rect(ABox.Left + TmpA, ABox.Top, ABox.Left + TmpB,
             ABox.Bottom);
-        inherited DoFillRect(TmpBand);
+        PlainFillRect(TmpBand);
       end;
     finally
       Brush.Color := TmpSaved;
@@ -728,7 +963,7 @@ begin
   if (fLib = nil) or (fPageHeight <= 0) or not fHaveFont or
     (fFontSpec.Escapement = 0) or ((Flags and CAD_DT_CALCRECT) <> 0) then
   begin
-    Result := inherited DrawText(Text, R, Flags);
+    Result := PlainText(Text, R, Flags);
     Exit;
   end;
   TmpSpec := fFontSpec;
@@ -765,7 +1000,7 @@ begin
     TmpLevelSpec.Escapement := 0;
     SelectFont(TmpLevelSpec);
     Transparent := True;
-    inherited DrawText(Text, TmpLevel, TmpFlags);
+    PlainText(Text, TmpLevel, TmpFlags);
   finally
     Transparent := TmpTransparent;
     SelectFont(TmpSpec);
@@ -824,7 +1059,11 @@ var
   TmpBounds: TRect;
   TmpResolution: Integer;
   TmpCount, TmpFirst, TmpLast, Cont: Integer;
+  TmpStates: String;
+  TmpNoLinks: TArray<TCADPDFLinks>;
 begin
+  TmpStates := '';
+  SetLength(TmpNoLinks, 0);
   if (ACAD = nil) or (AFileName = '') then
     Exit;
   { A copy: the query methods are not const, and a const record
@@ -918,6 +1157,7 @@ begin
               of a failure as well as a success. }
             TmpPDF.EndDocument;
           end;
+          TmpStates := TmpGraphics.ExtGStates;
         finally
           TmpCanvas.Free;
         end;
@@ -930,6 +1170,9 @@ begin
   finally
     TmpPDF.Free;
   end;
+  { Only now: the file is complete and closed. }
+  if TmpStates <> '' then
+    PDFUpdatePages(AFileName, TmpNoLinks, TmpStates);
 end;
 
 procedure CADSaveSheetsToPDF(const ACAD: TFNCCADCmp2D;
@@ -951,8 +1194,10 @@ var
   TmpLinks: TCADPDFLinks;
   TmpPageLinks: TArray<TCADPDFLinks>;
   TmpAnyLinks: Boolean;
+  TmpStates: String;
 begin
   TmpAnyLinks := False;
+  TmpStates := '';
   SetLength(TmpPageLinks, 0);
   if (ACAD = nil) or (ASheets = nil) or (AFileName = '') then
     Exit;
@@ -1033,6 +1278,7 @@ begin
           finally
             TmpPDF.EndDocument;
           end;
+          TmpStates := TmpGraphics.ExtGStates;
         finally
           TmpCanvas.Free;
         end;
@@ -1046,8 +1292,8 @@ begin
     TmpPDF.Free;
   end;
   { Only now: the file is complete and closed. }
-  if TmpAnyLinks then
-    CADAddPDFLinks(AFileName, TmpPageLinks);
+  if TmpAnyLinks or (TmpStates <> '') then
+    PDFUpdatePages(AFileName, TmpPageLinks, TmpStates);
 end;
 
 { ------------------------------------------------------------------
@@ -1060,6 +1306,12 @@ procedure CADAddPDFLinks(const AFileName: String;
   const APageLinks: array of TCADPDFLinks);
 begin
   Raise ECADPageError.Create('PDF links are not available on the LCL yet');
+end;
+
+procedure PDFUpdatePages(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks; const AExtGStates: String);
+begin
+  CADAddPDFLinks(AFileName, APageLinks);
 end;
 
 {$ELSE}
@@ -1184,11 +1436,16 @@ end;
 
 procedure CADAddPDFLinks(const AFileName: String;
   const APageLinks: array of TCADPDFLinks);
+begin
+  PDFUpdatePages(AFileName, APageLinks, '');
+end;
+
+procedure PDFUpdatePages(const AFileName: String;
+  const APageLinks: array of TCADPDFLinks; const AExtGStates: String);
 
   procedure Fail(const AWhy: String);
   begin
-    Raise ECADPageError.Create('The PDF was written without its links: ' +
-      AWhy);
+    Raise ECADPageError.Create('The PDF could not be completed: ' + AWhy);
   end;
 
 var
@@ -1236,7 +1493,7 @@ var
   end;
 
 begin
-  TmpAny := False;
+  TmpAny := AExtGStates <> '';
   for I := 0 to High(APageLinks) do
     if Length(APageLinks[I]) > 0 then
       TmpAny := True;
@@ -1297,11 +1554,10 @@ begin
         TmpOut := PDFEOL;
       TmpBase := Length(TmpBytes);
       TmpNext := TmpSize;
-      for I := 0 to Min(High(APageLinks), High(TmpPages)) do
+      for I := 0 to High(TmpPages) do
       begin
-        if Length(APageLinks[I]) = 0 then
-          Continue;
         TmpRefs := '';
+        if I <= High(APageLinks) then
         for J := 0 to High(APageLinks[I]) do
         begin
           if APageLinks[I][J].URL = '' then
@@ -1320,11 +1576,22 @@ begin
           TmpRefs := TmpRefs + ' ' + IntToStr(TmpNext) + ' 0 R';
           Inc(TmpNext);
         end;
-        if TmpRefs = '' then
+        if (TmpRefs = '') and (AExtGStates = '') then
           Continue;
         TmpDict := ObjectDict(S, TmpPages[I], TmpGen, TmpDummy, TmpAt);
+        if AExtGStates <> '' then
+        begin
+          TmpMatch := TRegEx.Match(TmpDict, '/Resources\s*<<');
+          if not TmpMatch.Success then
+            Fail('page ' + IntToStr(I + 1) +
+              ' keeps its resources in an object of their own');
+          Insert('/ExtGState<<' + AExtGStates + '>>', TmpDict,
+            TmpMatch.Index + TmpMatch.Length);
+        end;
         TmpMatch := TRegEx.Match(TmpDict, '/Annots\s*\[');
-        if TmpMatch.Success then
+        if TmpRefs = '' then
+          { Nothing to add to them. }
+        else if TmpMatch.Success then
         begin
           TmpAt := Pos(']', TmpDict, TmpMatch.Index + TmpMatch.Length);
           Insert(TmpRefs, TmpDict, TmpAt);
