@@ -63,7 +63,7 @@ tried.
 ## Installing
 
 ```
-git clone https://github.com/OwlHatSoftware/CADSysFNC
+git clone https://github.com/OwlHat-Software/CADSysFNC
 cd CADSysFNC
 Tools\gen-units.cmd
 ```
