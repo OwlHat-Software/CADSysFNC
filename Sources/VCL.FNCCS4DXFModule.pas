@@ -39,9 +39,19 @@ type
   { Used to store readed groups from 0 group to 0 group. }
   TGroupTable = array [0 .. 512] of Variant;
 
+  { : One vertex of an LWPOLYLINE. Bulge is the tangent of a quarter of the
+    arc's angle from this vertex to the next: 0 for a straight segment, and
+    positive when the arc turns anticlockwise. }
+  TDXFPolyVertex = record
+    X, Y, Bulge: Double;
+  end;
+
   TDXFRead = class(TObject)
   private
     fStream: TextFile;
+    { An LWPOLYLINE repeats groups 10, 20 and 42 once per vertex, and a
+      TGroupTable has one slot per code, so they are kept here as well. }
+    fVertices: TArray<TDXFPolyVertex>;
     { CS4-FIX (X2): per-instance format settings, so DXF parsing never writes
       the process-global FormatSettings. }
     fFS: TFormatSettings;
@@ -68,6 +78,8 @@ type
     property GroupCode: Word read fGroupCode;
     property GroupValue: Variant read fGroupValue;
     property CurrentSection: TSections read fCurrentSection;
+    { : The vertices of the entry just read, when it was an LWPOLYLINE. }
+    property Vertices: TArray<TDXFPolyVertex> read fVertices;
     { : Called every so often while the file is read, so the application
       can show progress. It used to be a TProgressBar, which the library
       cannot know about any more; wire this to whatever you use.
@@ -141,6 +153,7 @@ type
     function ReadCircle2D(Entry: TGroupTable): TEllipse2D;
     function ReadEllipse2D(Entry: TGroupTable): TCurve2D;
     function ReadPolyline2D(Entry: TGroupTable): TPolyline2D;
+    function ReadLWPolyline2D(Entry: TGroupTable): TPolyline2D;
     function ReadText2D(Entry: TGroupTable): TJustifiedVectText2D;
     function ReadSourceBlock(Entry: TGroupTable): TSourceBlock2D;
     function ReadBlock(Entry: TGroupTable): TBlock2D;
@@ -256,6 +269,7 @@ type
     function ReadTrace3D(Entry: TGroupTable): TPolyline3D;
     function ReadText3D(Entry: TGroupTable): TJustifiedVectText3D;
     function ReadPolyline3D(Entry: TGroupTable): TPrimitive3D;
+    function ReadLWPolyline3D(Entry: TGroupTable): TPolyline3D;
     function ReadPlanarFace3D(Entry: TGroupTable): TPlanarFace3D;
     function ReadSourceBlock(Entry: TGroupTable): TSourceBlock3D;
     function ReadBlock(Entry: TGroupTable): TBlock3D; virtual;
@@ -450,8 +464,10 @@ end;
 function TDXFRead.ReadAnEntry(GroupDel: Word; var Values: TGroupTable): Word;
 var
   I: Integer;
+  TmpCollect: Boolean;
 begin
   Result := 0;
+  SetLength(fVertices, 0);
   { CS4-FIX: Values was never cleared between entities, so every slot the
     current entity does not define kept the *previous* entity's value. In
     ReadPolyline2D the same LocalEntry is reused for the whole VERTEX loop, so
@@ -466,8 +482,25 @@ begin
       Exit;
   if (fGroupCode = 0) and (fGroupCode <> GroupDel) then
     Exit;
+  TmpCollect := (fGroupCode = 0) and (VarToStr(fGroupValue) = 'LWPOLYLINE');
   { Read all values. }
   repeat
+    if TmpCollect and (VarType(fGroupValue) <> varEmpty) then
+      case fGroupCode of
+        10:
+          begin
+            SetLength(fVertices, Length(fVertices) + 1);
+            fVertices[High(fVertices)].X := fGroupValue;
+            fVertices[High(fVertices)].Y := 0;
+            fVertices[High(fVertices)].Bulge := 0;
+          end;
+        20:
+          if Length(fVertices) > 0 then
+            fVertices[High(fVertices)].Y := fGroupValue;
+        42:
+          if Length(fVertices) > 0 then
+            fVertices[High(fVertices)].Bulge := fGroupValue;
+      end;
     if fGroupCode < 256 then
       Values[fGroupCode] := fGroupValue
     { The extended data types are remapped from 256=1000. }
@@ -683,6 +716,94 @@ begin
   Result.DrawBox := False;
 end;
 
+{ : The outline of an LWPOLYLINE: its vertices, with each bulge laid out as
+  short straight pieces, since a polyline holds points only. A closed one
+  ends back on its first vertex, as a closed POLYLINE does here, and the
+  last vertex's bulge is the arc back to the first. An open one's last bulge
+  leads nowhere and is ignored. }
+function DXFExpandPolyVertices(const AVertices: array of TDXFPolyVertex;
+  const AClosed: Boolean): TArray<TPoint2D>;
+const
+  { No piece turns more than this. On a radius R it leaves the chord less
+    than R / 1000 from the true arc. }
+  ARC_STEP = 5 * Pi / 180;
+var
+  TmpCount, I, J, TmpN: Integer;
+  TmpNext: TDXFPolyVertex;
+  TmpDX, TmpDY, TmpChord, TmpOff, TmpCX, TmpCY, TmpR, TmpStart, TmpSweep,
+    TmpBulge: Double;
+
+  procedure Add(const X, Y: Double);
+  begin
+    if TmpCount = Length(Result) then
+      SetLength(Result, Max(16, TmpCount * 2));
+    Result[TmpCount] := Point2D(X, Y);
+    Inc(TmpCount);
+  end;
+
+begin
+  SetLength(Result, 0);
+  TmpCount := 0;
+  for I := 0 to High(AVertices) do
+  begin
+    Add(AVertices[I].X, AVertices[I].Y);
+    if I < High(AVertices) then
+      TmpNext := AVertices[I + 1]
+    else if AClosed then
+      TmpNext := AVertices[0]
+    else
+      Break;
+    TmpBulge := AVertices[I].Bulge;
+    TmpDX := TmpNext.X - AVertices[I].X;
+    TmpDY := TmpNext.Y - AVertices[I].Y;
+    TmpChord := Sqrt(TmpDX * TmpDX + TmpDY * TmpDY);
+    if (TmpBulge = 0) or (TmpChord = 0) then
+      Continue;
+    { The centre is on the perpendicular through the chord's middle, to the
+      left of the direction of travel when the arc is under a half circle. }
+    TmpOff := (1 - TmpBulge * TmpBulge) / (4 * TmpBulge);
+    TmpCX := (AVertices[I].X + TmpNext.X) / 2 - TmpDY * TmpOff;
+    TmpCY := (AVertices[I].Y + TmpNext.Y) / 2 + TmpDX * TmpOff;
+    TmpR := TmpChord * (1 + TmpBulge * TmpBulge) / (4 * Abs(TmpBulge));
+    TmpStart := ArcTan2(AVertices[I].Y - TmpCY, AVertices[I].X - TmpCX);
+    TmpSweep := 4 * ArcTan(TmpBulge);
+    TmpN := Max(2, Ceil(Abs(TmpSweep) / ARC_STEP));
+    for J := 1 to TmpN - 1 do
+      Add(TmpCX + TmpR * Cos(TmpStart + TmpSweep * J / TmpN),
+        TmpCY + TmpR * Sin(TmpStart + TmpSweep * J / TmpN));
+  end;
+  if AClosed and (Length(AVertices) > 0) then
+    Add(AVertices[0].X, AVertices[0].Y);
+  SetLength(Result, TmpCount);
+end;
+
+function DXFLWIsClosed(const AEntry: TGroupTable): Boolean;
+begin
+  Result := (VarType(AEntry[70]) <> varEmpty) and ((AEntry[70] and 1) = 1);
+end;
+
+{ : An extrusion of 0,0,-1 is the outline seen from behind: X runs the other
+  way. Other directions are not followed here. }
+function DXFLWIsMirrored(const AEntry: TGroupTable): Boolean;
+begin
+  Result := (VarType(AEntry[230]) <> varEmpty) and (AEntry[230] < 0);
+end;
+
+function TDXF2DImport.ReadLWPolyline2D(Entry: TGroupTable): TPolyline2D;
+var
+  TmpPts: TArray<TPoint2D>;
+  I: Integer;
+begin
+  Result := nil;
+  if Length(fDXFRead.Vertices) < 2 then
+    Exit;
+  TmpPts := DXFExpandPolyVertices(fDXFRead.Vertices, DXFLWIsClosed(Entry));
+  if DXFLWIsMirrored(Entry) then
+    for I := 0 to High(TmpPts) do
+      TmpPts[I].X := -TmpPts[I].X;
+  Result := TPolyline2D.Create(0, TmpPts);
+end;
+
 function TDXF2DImport.ReadPolyline2D(Entry: TGroupTable): TPolyline2D;
 var
   LocalEntry: TGroupTable;
@@ -772,6 +893,8 @@ begin
     Result := ReadEllipse2D(Entry)
   else if Entry[0] = 'POLYLINE' then
     Result := ReadPolyline2D(Entry)
+  else if Entry[0] = 'LWPOLYLINE' then
+    Result := ReadLWPolyline2D(Entry)
   else if Entry[0] = 'TEXT' then
     Result := ReadText2D(Entry)
   else if (not IgnoreBlock) and (Entry[0] = 'INSERT') then
@@ -1010,6 +1133,12 @@ begin
       fHasExtension := True;
     end;
   end;
+  { A file nobody worked the extents out for says so with a minimum above
+    its maximum (1E+20 and -1E+20): that is no extent at all, and reordered
+    it would be the largest one there is. }
+  if (fExtension.Left > fExtension.Right) or
+    (fExtension.Bottom > fExtension.Top) then
+    fHasExtension := False;
   if fHasExtension then
     fExtension := ReOrderRect2D(fExtension);
 end;
@@ -1697,6 +1826,10 @@ begin
       fHasExtension := True;
     end;
   end;
+  { See TDXF2DImport.ReadHeader. }
+  if fHasExtension and ((fExtension.Left > fExtension.Right) or
+    (fExtension.Bottom > fExtension.Top)) then
+    fHasExtension := False;
   if fHasExtension then
     fExtension := ReOrderRect3D(fExtension);
 end;
@@ -2040,6 +2173,28 @@ begin
     Raise EDXFInvalidDXF.Create('Invalid DXF file.');
 end;
 
+function TDXF3DImport.ReadLWPolyline3D(Entry: TGroupTable): TPolyline3D;
+var
+  TmpPts: TArray<TPoint2D>;
+  TmpElevation: Double;
+  I: Integer;
+begin
+  Result := nil;
+  if Length(fDXFRead.Vertices) < 2 then
+    Exit;
+  TmpElevation := 0;
+  if VarType(Entry[38]) <> varEmpty then
+    TmpElevation := Entry[38];
+  TmpPts := DXFExpandPolyVertices(fDXFRead.Vertices, DXFLWIsClosed(Entry));
+  Result := TPolyline3D.Create(0, [Point3D(0, 0, 0)]);
+  Result.Points.Delete(0);
+  for I := 0 to High(TmpPts) do
+    if DXFLWIsMirrored(Entry) then
+      Result.Points.Add(Point3D(-TmpPts[I].X, TmpPts[I].Y, -TmpElevation))
+    else
+      Result.Points.Add(Point3D(TmpPts[I].X, TmpPts[I].Y, TmpElevation));
+end;
+
 function TDXF3DImport.ReadPlanarFace3D(Entry: TGroupTable): TPlanarFace3D;
 var
   TmpVect: TPointsSet3D;
@@ -2187,6 +2342,8 @@ begin
     Result := ReadTrace3D(Entry)
   else if Entry[0] = 'POLYLINE' then
     Result := ReadPolyline3D(Entry)
+  else if Entry[0] = 'LWPOLYLINE' then
+    Result := ReadLWPolyline3D(Entry)
   else if Entry[0] = '3DFACE' then
     Result := ReadPlanarFace3D(Entry)
   else if (not IgnoreBlock) and (Entry[0] = 'INSERT') then

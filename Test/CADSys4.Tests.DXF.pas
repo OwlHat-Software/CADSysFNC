@@ -11,7 +11,9 @@ unit CADSys4.Tests.DXF;
 interface
 
 uses
-  DUnitX.TestFramework;
+  DUnitX.TestFramework,
+  VCL.FNCCADSys4,
+  VCL.FNCCS4Shapes;
 
 type
 
@@ -69,6 +71,47 @@ type
     procedure ImportedLines_AreCreatedAsTheMappedClass;
   end;
 
+  { : LWPOLYLINE, the polyline most CAD programs write now: one entity with
+    its vertices in repeated groups, and arcs as bulges. }
+  [TestFixture]
+  TDXFLWPolylineTests = class(TObject)
+  private
+    FTempFile: string;
+    FCad: TFNCCADCmp2D;
+    { Writes these groups as the ENTITIES section and imports them. }
+    procedure Import(const AGroups: array of Variant);
+    function Poly(const AIndex: Integer = 0): TPolyline2D;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure EveryVertexIsKept;
+    [Test]
+    procedure AClosedOneEndsOnItsFirstVertex;
+    [Test]
+    procedure ABulgeBecomesAnArcOnTheRightSide;
+    [Test]
+    procedure ANegativeBulgeTurnsTheOtherWay;
+    [Test]
+    procedure AClosedOnesLastBulgeLeadsBackToTheFirstVertex;
+    [Test]
+    procedure AnOpenOnesLastBulgeIsIgnored;
+    [Test]
+    procedure AReversedExtrusionMirrorsX;
+    [Test]
+    procedure TheEntityAfterItIsStillRead;
+    [Test]
+    procedure OneWithoutASegmentIsReportedAsUnread;
+    [Test]
+    procedure AnOldPolylineIsNotConfusedWithIt;
+    [Test]
+    procedure ExtentsThatWereNeverWorkedOutAreNoExtents;
+    [Test]
+    procedure The3DImportKeepsTheElevation;
+  end;
+
 implementation
 
 uses
@@ -77,9 +120,8 @@ uses
   System.Variants,
   System.IOUtils,
   Winapi.Windows,
+  System.Math,
   VCL.FNCCS4BaseTypes,
-  VCL.FNCCADSys4,
-  VCL.FNCCS4Shapes,
   VCL.FNCCS4DXFModule,
   { Required: its initialization section fills the persistence class
     registry and the font list. }
@@ -675,9 +717,265 @@ begin
   end;
 end;
 
+{ TDXFLWPolylineTests }
+
+procedure TDXFLWPolylineTests.Setup;
+begin
+  FTempFile := TPath.GetTempFileName;
+  FCad := TFNCCADCmp2D.Create(nil);
+end;
+
+procedure TDXFLWPolylineTests.TearDown;
+begin
+  FCad.Free;
+  if TFile.Exists(FTempFile) then
+    TFile.Delete(FTempFile);
+end;
+
+procedure TDXFLWPolylineTests.Import(const AGroups: array of Variant);
+var
+  TmpWrite: TDXFWrite;
+  TmpImport: TDXF2DImport;
+  I: Integer;
+begin
+  TmpWrite := TDXFWrite.Create(FTempFile);
+  try
+    TmpWrite.BeginSection(scEntities);
+    I := 0;
+    while I < High(AGroups) do
+    begin
+      TmpWrite.WriteGroup(AGroups[I], AGroups[I + 1]);
+      Inc(I, 2);
+    end;
+    TmpWrite.EndSection(scEntities);
+    WriteDXFTail(TmpWrite);
+  finally
+    TmpWrite.Free;
+  end;
+  TmpImport := TDXF2DImport.Create(FTempFile, FCad);
+  try
+    TmpImport.ReadDXF;
+    Assert.IsFalse(TmpImport.UnableToReadAllTheFile, 'all of it was read');
+  finally
+    TmpImport.Free;
+  end;
+end;
+
+function TDXFLWPolylineTests.Poly(const AIndex: Integer): TPolyline2D;
+begin
+  Result := FCad.GetObject(AIndex) as TPolyline2D;
+end;
+
+procedure TDXFLWPolylineTests.EveryVertexIsKept;
+begin
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 3, 70, 0, 10, 1.5, 20, 2.5, 10, 3.5,
+    20, 4.5, 10, 5.5, 20, 6.5]);
+  AssertInt(1, FCad.ObjectsCount, 'one entity');
+  AssertInt(3, Poly.Points.Count, 'three vertices');
+  AssertReal(1.5, Poly.Points[0].X, TOL_DXF, 'first X');
+  AssertReal(2.5, Poly.Points[0].Y, TOL_DXF, 'first Y');
+  AssertReal(3.5, Poly.Points[1].X, TOL_DXF, 'second X');
+  AssertReal(6.5, Poly.Points[2].Y, TOL_DXF, 'third Y');
+end;
+
+procedure TDXFLWPolylineTests.AClosedOneEndsOnItsFirstVertex;
+begin
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 3, 70, 1, 10, 0.0, 20, 0.0, 10, 4.0,
+    20, 0.0, 10, 4.0, 20, 3.0]);
+  AssertInt(4, Poly.Points.Count, 'three, and back');
+  AssertReal(0.0, Poly.Points[3].X, TOL_DXF, 'back at X');
+  AssertReal(0.0, Poly.Points[3].Y, TOL_DXF, 'back at Y');
+end;
+
+procedure TDXFLWPolylineTests.ABulgeBecomesAnArcOnTheRightSide;
+var
+  I: Integer;
+begin
+  { A half circle from 0,0 to 2,0, anticlockwise: centre 1,0, by way of 1,-1. }
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 0.0, 20, 0.0, 42, 1.0,
+    10, 2.0, 20, 0.0]);
+  Assert.IsTrue(Poly.Points.Count >= 36, Format('%d points',
+    [Poly.Points.Count]));
+  for I := 0 to Poly.Points.Count - 1 do
+  begin
+    AssertReal(1.0, Sqrt(Sqr(Poly.Points[I].X - 1) + Sqr(Poly.Points[I].Y)),
+      TOL_DXF, Format('point %d on the circle', [I]));
+    Assert.IsTrue(Poly.Points[I].Y <= TOL_DXF, Format('point %d below', [I]));
+  end;
+  AssertReal(0.0, Poly.Points[0].X, TOL_DXF, 'starts on the first vertex');
+  AssertReal(2.0, Poly.Points[Poly.Points.Count - 1].X, TOL_DXF,
+    'ends on the second');
+end;
+
+procedure TDXFLWPolylineTests.ANegativeBulgeTurnsTheOtherWay;
+var
+  I: Integer;
+begin
+  { A quarter circle's bulge is tan(22.5). From 0,0 to 2,0 clockwise it stays
+    above the chord: radius Sqrt(2), centre 1,-1, up to 1,Sqrt(2)-1. }
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 0.0, 20, 0.0, 42,
+    -Tan(Pi / 8), 10, 2.0, 20, 0.0]);
+  for I := 0 to Poly.Points.Count - 1 do
+  begin
+    AssertReal(Sqrt(2), Sqrt(Sqr(Poly.Points[I].X - 1) +
+      Sqr(Poly.Points[I].Y + 1)), 1E-5, Format('point %d on the circle', [I]));
+    Assert.IsTrue(Poly.Points[I].Y >= -TOL_DXF, Format('point %d above', [I]));
+  end;
+end;
+
+procedure TDXFLWPolylineTests.AClosedOnesLastBulgeLeadsBackToTheFirstVertex;
+var
+  I: Integer;
+begin
+  { A whole circle out of two half circles. }
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 1, 10, 0.0, 20, 0.0, 42, 1.0,
+    10, 2.0, 20, 0.0, 42, 1.0]);
+  for I := 0 to Poly.Points.Count - 1 do
+    AssertReal(1.0, Sqrt(Sqr(Poly.Points[I].X - 1) + Sqr(Poly.Points[I].Y)),
+      TOL_DXF, Format('point %d on the circle', [I]));
+  AssertReal(0.0, Poly.Points[Poly.Points.Count - 1].X, TOL_DXF, 'closed');
+  Assert.IsTrue(Poly.Points.Count >= 72, Format('%d points',
+    [Poly.Points.Count]));
+end;
+
+procedure TDXFLWPolylineTests.AnOpenOnesLastBulgeIsIgnored;
+begin
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 0.0, 20, 0.0, 10, 2.0,
+    20, 0.0, 42, 1.0]);
+  AssertInt(2, Poly.Points.Count, 'nothing to bend it towards');
+end;
+
+procedure TDXFLWPolylineTests.AReversedExtrusionMirrorsX;
+begin
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 1.0, 20, 2.0, 10, 3.0,
+    20, 4.0, 210, 0.0, 220, 0.0, 230, -1.0]);
+  AssertReal(-1.0, Poly.Points[0].X, TOL_DXF, 'first X');
+  AssertReal(2.0, Poly.Points[0].Y, TOL_DXF, 'first Y');
+  AssertReal(-3.0, Poly.Points[1].X, TOL_DXF, 'second X');
+end;
+
+procedure TDXFLWPolylineTests.TheEntityAfterItIsStillRead;
+begin
+  Import([0, 'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 0.0, 20, 0.0, 10, 2.0,
+    20, 0.0, 0, 'LINE', 8, '0', 10, 5.0, 20, 6.0, 11, 7.0, 21, 8.0, 0,
+    'LWPOLYLINE', 8, '0', 90, 2, 70, 0, 10, 9.0, 20, 9.0, 10, 8.0, 20, 8.0]);
+  AssertInt(3, FCad.ObjectsCount, 'all three');
+  Assert.IsTrue(FCad.GetObject(1) is TLine2D, 'the line');
+  AssertInt(2, Poly(2).Points.Count, 'the second has only its own vertices');
+  AssertReal(9.0, Poly(2).Points[0].X, TOL_DXF, 'and they are its own');
+end;
+
+procedure TDXFLWPolylineTests.OneWithoutASegmentIsReportedAsUnread;
+var
+  TmpWrite: TDXFWrite;
+  TmpImport: TDXF2DImport;
+begin
+  TmpWrite := TDXFWrite.Create(FTempFile);
+  try
+    TmpWrite.BeginSection(scEntities);
+    TmpWrite.WriteGroup(0, 'LWPOLYLINE');
+    TmpWrite.WriteGroup(8, '0');
+    TmpWrite.WriteGroup(90, 1);
+    TmpWrite.WriteGroup(10, 1.0);
+    TmpWrite.WriteGroup(20, 1.0);
+    TmpWrite.EndSection(scEntities);
+    WriteDXFTail(TmpWrite);
+  finally
+    TmpWrite.Free;
+  end;
+  TmpImport := TDXF2DImport.Create(FTempFile, FCad);
+  try
+    TmpImport.ReadDXF;
+    Assert.IsTrue(TmpImport.UnableToReadAllTheFile, 'said so');
+  finally
+    TmpImport.Free;
+  end;
+  AssertInt(0, FCad.ObjectsCount, 'nothing made of it');
+end;
+
+procedure TDXFLWPolylineTests.AnOldPolylineIsNotConfusedWithIt;
+begin
+  Import([0, 'POLYLINE', 8, '0', 66, 1, 70, 0, 0, 'VERTEX', 8, '0', 10, 1.0,
+    20, 2.0, 0, 'VERTEX', 8, '0', 10, 3.0, 20, 4.0, 0, 'SEQEND', 8, '0']);
+  AssertInt(2, Poly.Points.Count, 'as before');
+  AssertReal(3.0, Poly.Points[1].X, TOL_DXF, 'second X');
+end;
+
+procedure TDXFLWPolylineTests.ExtentsThatWereNeverWorkedOutAreNoExtents;
+var
+  TmpWrite: TDXFWrite;
+  TmpImport: TDXF2DImport;
+begin
+  TmpWrite := TDXFWrite.Create(FTempFile);
+  try
+    TmpWrite.BeginSection(scHeader);
+    TmpWrite.WriteGroup(9, '$EXTMIN');
+    TmpWrite.WriteGroup(10, 1E20);
+    TmpWrite.WriteGroup(20, 1E20);
+    TmpWrite.WriteGroup(9, '$EXTMAX');
+    TmpWrite.WriteGroup(10, -1E20);
+    TmpWrite.WriteGroup(20, -1E20);
+    TmpWrite.EndSection(scHeader);
+    WriteDXFTail(TmpWrite);
+  finally
+    TmpWrite.Free;
+  end;
+  TmpImport := TDXF2DImport.Create(FTempFile, FCad);
+  try
+    TmpImport.ReadDXF;
+    Assert.IsFalse(TmpImport.HasExtension, 'no extents');
+  finally
+    TmpImport.Free;
+  end;
+end;
+
+procedure TDXFLWPolylineTests.The3DImportKeepsTheElevation;
+var
+  TmpWrite: TDXFWrite;
+  TmpImport: TDXF3DImport;
+  TmpCad: TFNCCADCmp3D;
+  TmpPoly: TPolyline3D;
+begin
+  TmpWrite := TDXFWrite.Create(FTempFile);
+  try
+    TmpWrite.BeginSection(scEntities);
+    TmpWrite.WriteGroup(0, 'LWPOLYLINE');
+    TmpWrite.WriteGroup(8, '0');
+    TmpWrite.WriteGroup(90, 2);
+    TmpWrite.WriteGroup(70, 0);
+    TmpWrite.WriteGroup(38, 7.5);
+    TmpWrite.WriteGroup(10, 1.0);
+    TmpWrite.WriteGroup(20, 2.0);
+    TmpWrite.WriteGroup(10, 3.0);
+    TmpWrite.WriteGroup(20, 4.0);
+    TmpWrite.EndSection(scEntities);
+    WriteDXFTail(TmpWrite);
+  finally
+    TmpWrite.Free;
+  end;
+  TmpCad := TFNCCADCmp3D.Create(nil);
+  try
+    TmpImport := TDXF3DImport.Create(FTempFile, TmpCad);
+    try
+      TmpImport.ReadDXF;
+    finally
+      TmpImport.Free;
+    end;
+    AssertInt(1, TmpCad.ObjectsCount, 'one entity');
+    TmpPoly := TmpCad.GetObject(0) as TPolyline3D;
+    AssertInt(2, TmpPoly.Points.Count, 'two vertices');
+    AssertReal(3.0, TmpPoly.Points[1].X, TOL_DXF, 'X');
+    AssertReal(4.0, TmpPoly.Points[1].Y, TOL_DXF, 'Y');
+    AssertReal(7.5, TmpPoly.Points[1].Z, TOL_DXF, 'Z');
+  finally
+    TmpCad.Free;
+  end;
+end;
+
 initialization
 
 TDUnitX.RegisterTestFixture(TDXFGroupRoundTripTests);
 TDUnitX.RegisterTestFixture(TDXFImportRoundTripTests);
+TDUnitX.RegisterTestFixture(TDXFLWPolylineTests);
 
 end.

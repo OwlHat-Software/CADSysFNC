@@ -166,7 +166,7 @@ Two DUnitX console suites under `Test`, run together by
 
 * `CADSys4Tests` — geometry, structures, shapes, JSON persistence, DXF, saved
   views, the page model, sheets, and the drawing layer with its VCL backend.
-  727 tests.
+  739 tests.
 * `CADSysFNCTests` — the FNC backend drawn into a `TTMSFNCGraphics` bitmap. 75
   tests.
 
@@ -212,6 +212,14 @@ Documentations\ the original CADSys 4.2 help file and change log
 * Everything the library measures other than a line weight is still in pixels —
   the pick aperture, control-point handles, ruler ticks. Only pen weight and
   hatch spacing have a physical size.
+* DXF import takes ASCII files of any version and does not look at the version
+  number. It reads `LINE`, `ARC`, `CIRCLE`, `POLYLINE`, `LWPOLYLINE`, `TRACE`,
+  `SOLID`, `INSERT` and, once `SetTextFont` has been called, `TEXT`. Anything else,
+  such as `MTEXT`, `SPLINE`, `POINT` or `HATCH`, is left out and
+  `UnableToReadAllTheFile` says so; it raises nothing. An `LWPOLYLINE`'s arcs become
+  short straight pieces and its widths are not kept. `ELLIPSE` comes out wrong, the
+  text of a 2007 or later file is read as ANSI rather than UTF-8, and binary DXF
+  raises `EInOutError`.
 * No drawing made by the original library is in the repository - the `.CS2`
   fixtures in `Test\data` were synthesised from the format description, not
   written by a pre-port CADSys.
