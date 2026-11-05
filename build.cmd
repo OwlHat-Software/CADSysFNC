@@ -44,6 +44,8 @@ rem from an earlier run go first.
 del "%LOGS%\build.log" "%LOGS%\test.log" "%LOGS%\build-fnc.log" "%LOGS%\test-fnc.log" 2>nul
 call "%TOOLS%\build-and-test.cmd" %BDSVER%
 findstr /B /C:"=== build " "%LOGS%\build.log" >nul 2>&1 || goto notools
+rem The main suite needs TMS FNC too: without it, a compiler error names a TMS unit.
+findstr /C:"Unit 'VCL.TMSFNC" "%LOGS%\build.log" >nul 2>&1 && goto notools
 if not exist "%LOGS%\test.log" goto compilefail
 findstr /B /C:"=== test exit 0" "%LOGS%\test.log" >nul 2>&1 || goto testfail
 findstr /C:"skipping the FNC suite" "%LOGS%\build-fnc.log" >nul 2>&1 && goto notools

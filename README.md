@@ -166,9 +166,9 @@ Two DUnitX console suites under `Test`, run together by
 
 * `CADSys4Tests` — geometry, structures, shapes, JSON persistence, DXF, saved
   views, the page model, sheets, and the drawing layer with its VCL backend.
-  576 tests.
-* `CADSysFNCTests` — the FNC backend drawn into a `TTMSFNCGraphics` bitmap. Kept
-  separate so the main suite does not need FNC to run.
+  716 tests.
+* `CADSysFNCTests` — the FNC backend drawn into a `TTMSFNCGraphics` bitmap. 67
+  tests.
 
 `Tools\build-vcl.cmd` and `Tools\build-fmx.cmd` build the two demos; the FMX one
 also compiles `Test\CADSysFMXCheck.dpr`, which links every unit and runs nothing.

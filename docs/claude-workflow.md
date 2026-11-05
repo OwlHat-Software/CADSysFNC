@@ -60,8 +60,8 @@ it:
 1. Checks that no compiler directive hides inside a brace comment (`Tools\check-comments.py`). This needs Python;
    without it the build says the check was skipped and goes on.
 2. Regenerates `Generated\` from `Sources\` (each script in `Tools\` does this first).
-3. Builds and runs both DUnitX suites (`Tools\build-and-test.cmd`). The FNC suite must have run: that script treats
-   a missing TMS FNC Core as a skip, the gate treats it as a failure.
+3. Builds and runs both DUnitX suites (`Tools\build-and-test.cmd`). Both must have run: that script can skip the FNC
+   suite, and the gate treats a skip as a failure.
 4. Builds the VCL demo (`Tools\build-vcl.cmd`).
 5. Builds the FMX link-everything project and the FMX demo (`Tools\build-fmx.cmd`).
 6. Builds all four packages without installing them (`Tools\build-packages.cmd`).
@@ -79,8 +79,8 @@ TMS FNC is looked for beside this folder (`..\TMS\Products`). A checkout elsewhe
   error in `FMX.FNCCADSys4.pas(16817)` is line 16817 of the master.
 - New library units go in the table in `Tools\gen-units.ps1` with the frameworks they belong to, in the runtime
   packages in `Packages\delphi` and in `Test\CADSysFMXCheck.dpr`; tests go in the suite's `.dpr` and `.dproj`.
-- The library's behaviour gets DUnitX tests in `Test\CADSys4.Tests.<area>.pas`. The main suite does not need TMS FNC;
-  whatever does goes in `CADSysFNCTests`. A CS item's test comes from its section in the spec.
+- The library's behaviour gets DUnitX tests in `Test\CADSys4.Tests.<area>.pas`. What draws through the FNC backend into
+  a `TTMSFNCGraphics` bitmap goes in `CADSysFNCTests`. A CS item's test comes from its section in the spec.
 - Existing drawings, JSON files and the applications keep working: a change does not break the format or the API
   without a decision record. Format changes also go in `docs\json-format.md`.
 - Output that cannot be unit tested (a real printer, a paste into Office, how a demo looks) goes on the list for the

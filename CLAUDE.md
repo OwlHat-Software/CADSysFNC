@@ -12,8 +12,8 @@ The way of working is `docs\claude-workflow.md` (decision 0001). The short versi
   the IDs in commits and pull requests (`CS-21: ...`). "Continue with CS-xx" is a complete instruction. When an item is
   done, say so in that document, with the commit.
 - New library units: add them to the table in `Tools\gen-units.ps1`, to the runtime packages in `Packages\delphi` and to
-  `Test\CADSysFMXCheck.dpr`. Tests: `Test\CADSys4.Tests.<area>.pas`, in the `.dpr` and `.dproj`. The main suite stays
-  free of TMS FNC; what needs it goes in `CADSysFNCTests`.
+  `Test\CADSysFMXCheck.dpr`. Tests: `Test\CADSys4.Tests.<area>.pas`, in the `.dpr` and `.dproj`. What draws through the
+  FNC backend goes in `CADSysFNCTests`.
 - Existing drawings, JSON files and the applications keep working. Format changes go in `docs\json-format.md`.
 - Text files use CRLF in the working tree. Files keep their encoding (the masters are UTF-8 with a BOM); new text files
   stay ASCII unless they need otherwise.
