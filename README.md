@@ -173,7 +173,10 @@ Two DUnitX console suites under `Test`, run together by
 `Tools\build-vcl.cmd` and `Tools\build-fmx.cmd` build the two demos; the FMX one
 also compiles `Test\CADSysFMXCheck.dpr`, which links every unit and runs nothing.
 All four scripts regenerate the per-framework units first and write to
-`Tools\logs\`. Run all four before believing a change that touches shared code.
+`Tools\logs\`. Run all four before believing a change that touches shared code:
+`build.cmd` in the root does that, packages included, and ends with
+`BUILD OK, TESTS PASSED`. They look for TMS FNC beside this folder; set
+`CADSYS_TMS` to the `Products` folder when it is elsewhere.
 
 ## Repository layout
 

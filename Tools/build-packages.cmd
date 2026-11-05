@@ -82,7 +82,7 @@ if "%DCPDIR%"=="" (
 rem --- TMS FNC Core: both frameworks' dcps are in one folder ----------
 set FNCCORE=
 for %%d in (Release Debug) do (
-  for %%r in ("%ROOT%\..\TMS\Products" "%ROOT%\..\..\Products" "%ROOT%\..\Products") do (
+  for %%r in ("%CADSYS_TMS%" "%ROOT%\..\TMS\Products" "%ROOT%\..\..\Products" "%ROOT%\..\Products") do (
     if not defined FNCCORE if exist "%%~r\tms.fnc.core\packages\d12\Win32\%%d\VCLTMSFNCCorePkg.dcp" set FNCCORE=%%~r\tms.fnc.core\packages\d12\Win32\%%d
   )
 )

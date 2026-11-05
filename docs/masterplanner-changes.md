@@ -50,6 +50,9 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-16 | **GDI/EMF backend: wrapped text not centred vertically** (found in WP-0.2) | Must | MP-OUT-004 | Done (7b15de7) |
 | CS-17 | **EMF: uneven glyph spacing, text overflow** at the 600 dpi layout (found in WP-0.2) | Must | MP-OUT-004 | Done (7b15de7) |
 | CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Done (7b15de7) |
+| CS-19 | **PDF: an empty clip path** before every clip (found in WP-5.1) | Could | MP-OUT-001 | Open |
+| CS-20 | **Print one sheet tiled** over smaller pages, with overlap and assembly marks (WP-5.2) | Must | MP-OUT-002 | Open |
+| CS-21 | **PDF: alpha of a fill or pen is lost** - translucent colours come out opaque (found in WP-5.3) | Must | MP-MRK-003, MP-OUT-001 | Open |
 
 ---
 
@@ -405,7 +408,66 @@ Lets a sheet show ten years of a plate across an A3 width while lanes keep their
 
 **Done as (`7b15de7`):** both parts. The registered `PNG` is left off unless `CADClipboardPNG` (default False); `CF_DIB` stays. The SVG goes on under `image/svg+xml` while `CADClipboardSVG` (default True), for a sheet (`CADSaveSheetToSVGStream`) and for a model rectangle (drawn by `CADDrawModelRect` onto `TCADSVGGraphics`). Test: `TheClipboardHasTheMetafileTheSVGAndABitmap`. Pasted into PowerPoint by Jack from the spike's "Copy sheet (EMF)" on 2026-10-17: works.
 
-## 21. Done when
+## 21. CS-19 — PDF: an empty clip path before every clip (Could)
+
+**Found in WP-5.1** (2026-10-28, CADSysFNC `b79ae70`). Every clip in a PDF written by `CADSaveSheetsToPDF` is preceded by `q W n` with no path: the content stream reads `q`, `W n`, then `236 4090 9449 2406 re`, `W n`. `W` on an empty path is not valid PDF, and poppler (`pdftotext`) reports "Syntax Error: Empty path in clip" for each one (21 in a three-sheet Masterplanner file, 10 in the spike's `spike.pdf`). Acrobat, Edge and Windows' own renderer ignore it and draw the page correctly, so nothing is lost on paper; a strict checker (PDF/A validation, a print shop's preflight) may reject the file.
+
+**Likely cause:** `TCADPDFGraphics.DoPushClip`, or FNC's `DrawPathBeginClip` that it reaches, writes `W n` before the rectangle is added, and then the rectangle's own `re W n`.
+
+**Fix plan:** write only `q`, the path and `W n` for a clip, as the CS-12 gradient clip does.
+
+**Test:** a sheet with a viewport, written to PDF: no `W n` in the content stream without a path operator (`re`, `m`/`l`/`c`, `h`) since the last `n`, `q` or paint operator; `pdftotext` on it prints no syntax errors.
+
+## 22. CS-20 — Print one sheet tiled, with overlap and assembly marks (Must)
+
+**From WP-5.2** (MP-OUT-002: "one large sheet can be printed **tiled** over smaller pages with overlap marks"). An A0 overview has to come out of an A4 or A3 office printer, at full size, as pages that are taped together. `TCADPageSetup.Tiled` tiles the **model**; there is nothing that tiles a **sheet** (paper space, with its viewports, own headers and furniture), and no marks to put the pages together by.
+
+**Change.** In `VCL.FNCCS4Paper` / `VCL.FNCCS4Print` (framework-free), a tiling of a sheet onto pages:
+
+```pascal
+TCADSheetTiling = record
+  Paper: TCADPaperKind;              { the printer's paper, e.g. pkA4 }
+  CustomWidthMM, CustomHeightMM: TRealType;
+  Orientation: TCADPageOrientation;
+  OverlapMM: TRealType;              { default 10 }
+  Marks: Boolean;                    { default True }
+  class function Default: TCADSheetTiling; static;
+end;
+
+{ : Pages across and down that ASheet takes at 1:1 on ATiling's paper. }
+procedure CADSheetTileCount(const ASheet: TCADSheet;
+  const ATiling: TCADSheetTiling; const ADevice: TCADPageDevice;
+  out AAcross, ADown: Integer);
+{ : Draws tile AIndex (left to right, then top to bottom) of ASheet. }
+procedure CADDrawSheetTile(const ACAD: TFNCCADCmp2D; const ASheet: TCADSheet;
+  const ATiling: TCADSheetTiling; const ADevice: TCADPageDevice;
+  const AIndex: Integer; const ACanvas: TDecorativeCanvas);
+```
+
+and the outputs on top of it: `CADPrintSheetTiledFMX(ACAD, ASheet, ATiling, ATitle)` (FMX's active printer, as `CADPrintSheetsFMX`), the VCL equivalent, and `CADSaveSheetTiledToPDF(ACAD, ASheet, ATiling, AFileName)` (so the tiles can be checked and sent without a printer).
+
+**Rules.**
+- Scale 1:1: a sheet millimetre is a paper millimetre. Each page shows the part of the sheet that fits its **printable** area (the device's unprintable margins, `TCADPageDevice`), so nothing falls into the printer's edge.
+- Neighbouring tiles overlap by `OverlapMM`: tile *i+1* starts `OverlapMM` before tile *i* ends, across and down. The last row and column take what is left; a sheet that fits one page gives one page, without marks.
+- Marks (when `Marks`), drawn in a hairline (0.1 mm) over the drawing:
+  - a cut line along the edge of the overlap where the page is laid **under** its neighbour (the right and bottom overlap of a page are glued under the next one): short ticks at both ends of that line, and the line itself dashed;
+  - small registration crosses at the corners of the overlap, so two pages can be aligned on each other;
+  - in a corner of the printable area, outside the drawing where possible: the tile's name, column letter and row number ("B2"), and "of" the grid ("A1 - C3"), and the sheet's name.
+- The marks are on the page, not on the sheet: they do not appear in the sheet's own PDF, preview or print.
+
+**Test:** an A1 landscape sheet (841 x 594) tiled on A4 portrait (printable 190 x 277 at 10 mm margins), overlap 10: `CADSheetTileCount` gives 5 across, 3 down; the tiles' sheet windows overlap by exactly 10 mm and together cover the sheet; tile 0 is the top left. A sheet of A4 on A4 gives 1 page and no marks. A tiled PDF of the WP-0.1 spike's sheet shows the marks and the tile names.
+
+**Masterplanner side** (after the library has it): a *Print tiled...* choice next to *Print...* for one sheet, with the printer's paper, orientation and overlap, and the page count shown before printing.
+
+## 23. CS-21 — PDF: the alpha of a fill or pen is lost (Must)
+
+**Found in WP-5.3** (2026-10-31, CADSysFNC `b79ae70`), comparing the PNG and the PDF of the same sheet. The sample's building holiday is a period marker filled with 50 % grey at alpha `$38` (22 %). On screen, in the PNG and in the SVG it is a faint band; in the PDF it is **solid mid grey** - eight times darker than meant, and the legend swatch with it. The PDF has no `ExtGState` at all, so no `/ca` or `/CA` reaches the file: the FNC backend sets the FNC fill's `Opacity` from the colour's alpha (§1, "Alpha colours"), and the FNC PDF engine does not write it. (The GDI backend, used for print and EMF, flattens alpha against `BlendBackground` by design - lighter, but not see-through; that is a known limit, not this item.)
+
+**Change.** In `TCADPDFGraphics`, a fill or pen whose colour has alpha < 255 is written with a graphics state that carries it: an `ExtGState` resource with `/ca a` (fill) and/or `/CA a` (stroke), selected with `gs` inside a `q ... Q` around that one shape, a = alpha / 255. One `ExtGState` per distinct alpha, reused. Text drawn in a colour with alpha the same way. The CS-12 gradient bands, when either colour has alpha, interpolate it per band.
+
+**Test:** a sheet with a rectangle filled 50 % grey at alpha `$38` over a black line, written to PDF: the content stream selects an `ExtGState` with `/ca 0.22` (± 0.005) for the rectangle, and rendered (pdftoppm, or Windows.Data.Pdf) the pixel over white is about 228 grey, not 128, and the line shows through. An opaque fill writes no `gs`.
+
+## 24. Done when
 
 - All Must items in `Sources`, regenerated, packages built for FMX and VCL, test suites green.
 - VisualPlannerFNC builds and opens its drawings unchanged.
