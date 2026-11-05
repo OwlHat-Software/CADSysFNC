@@ -57,6 +57,10 @@ turned text, rotated about its rectangle's centre in the page's own
 coordinates. On paper and on screen they look as they should. A program that
 edits the PDF sees bands, not one gradient object.
 
+A colour's alpha reaches the page: a translucent fill, pen or text is drawn with
+a graphics state of its own, and the rest of the page is as it would be. A
+gradient's alpha is worked out per band, from the one colour's to the other's.
+
 ## PNG
 
 On FMX the bitmap's own alpha is used, so a transparent image is exact. On the

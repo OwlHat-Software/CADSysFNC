@@ -52,7 +52,7 @@ All changes go into `Sources\VCL.*` (the masters) and are regenerated for FMX/VC
 | CS-18 | Clipboard: **no PNG next to the EMF** (Office pastes the PNG by default) — Must; SVG (`image/svg+xml`) next to it — Should (WP-0.2, decision 0002) | Must / Should | MP-OUT-004 | Done (7b15de7) |
 | CS-19 | **PDF: an empty clip path** before every clip (found in WP-5.1) | Could | MP-OUT-001 | Open |
 | CS-20 | **Print one sheet tiled** over smaller pages, with overlap and assembly marks (WP-5.2) | Must | MP-OUT-002 | Open |
-| CS-21 | **PDF: alpha of a fill or pen is lost** - translucent colours come out opaque (found in WP-5.3) | Must | MP-MRK-003, MP-OUT-001 | Open |
+| CS-21 | **PDF: alpha of a fill or pen is lost** - translucent colours come out opaque (found in WP-5.3) | Must | MP-MRK-003, MP-OUT-001 | Done (09cf326) |
 
 ---
 
@@ -466,6 +466,8 @@ and the outputs on top of it: `CADPrintSheetTiledFMX(ACAD, ASheet, ATiling, ATit
 **Change.** In `TCADPDFGraphics`, a fill or pen whose colour has alpha < 255 is written with a graphics state that carries it: an `ExtGState` resource with `/ca a` (fill) and/or `/CA a` (stroke), selected with `gs` inside a `q ... Q` around that one shape, a = alpha / 255. One `ExtGState` per distinct alpha, reused. Text drawn in a colour with alpha the same way. The CS-12 gradient bands, when either colour has alpha, interpolate it per band.
 
 **Test:** a sheet with a rectangle filled 50 % grey at alpha `$38` over a black line, written to PDF: the content stream selects an `ExtGState` with `/ca 0.22` (± 0.005) for the rectangle, and rendered (pdftoppm, or Windows.Data.Pdf) the pixel over white is about 228 grey, not 128, and the line shows through. An opaque fill writes no `gs`.
+
+**Done as (`09cf326`):** the change, for fills, pens and text, on both save routines. FNC offers no way to write an operator, so the `gs` goes through its private writer, reached by RTTI: if a new FNC Core renames that field, colours come out opaque as they did and `TCADPDFAlphaTests` fails. The resources go on with the links, in one incremental update, and only when a page set needs them; an opaque drawing's file is unchanged. Rendered with Windows.Data.Pdf, from the VCL and from FMX: the rectangle over white 227 grey, over the black line 28, a pen at alpha `` in blue over white 127,127,255. Text is checked in the content stream and not by pixel. The gradient's alpha is interpolated on paper only; the other backends still take the first colour's.
 
 ## 24. Done when
 
