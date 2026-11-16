@@ -654,13 +654,13 @@ begin
       TmpObj := TObject2D(TmpIter.First);
       while TmpObj <> nil do
       begin
+        { A layer that is off does not print (CS-U2); the setup's
+          override can hide more. }
         if TmpObj.IsVisible(TmpWindow, ADrawMode) and
           (not TmpSetup.View.UseLayerOverride or
-          not(TmpObj.Layer in TmpSetup.View.HiddenLayers)) then
-        begin
-          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+          not(TmpObj.Layer in TmpSetup.View.HiddenLayers)) and
+          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer) then
           TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
-        end;
         TmpObj := TObject2D(TmpIter.Next);
       end;
     finally

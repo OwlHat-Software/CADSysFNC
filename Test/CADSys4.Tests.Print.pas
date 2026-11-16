@@ -69,6 +69,8 @@ type
     [Test]
     procedure DrawPage_ClipsToThePrintableArea;
     [Test]
+    procedure DrawPage_LeavesAHiddenLayerOut;
+    [Test]
     procedure DrawPage_LeavesTheCanvasScaleAsItFoundIt;
     [Test]
     procedure HiddenLayers_AreNotPrinted;
@@ -462,6 +464,35 @@ begin
     Assert.AreEqual(1, TmpRec.CountOf('PopClip'),
       'and given back - a clip left behind takes the next thing drawn '
       + 'with it');
+  finally
+    TmpRec.Free;
+  end;
+end;
+
+procedure TCADPageModelTests.DrawPage_LeavesAHiddenLayerOut;
+var
+  TmpRec: TRecordingGraphics;
+  TmpCanvas: TDecorativeCanvas;
+  TmpHidden: TObject2D;
+begin
+  { CS-U2, on the page route as well as the sheet's: a layer that is off
+    does not print. }
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 100)));
+  TmpHidden := TLine2D.Create(-1, Point2D(0, 100), Point2D(100, 0));
+  { After AddObject, which puts an object on the current layer. }
+  FCAD.AddObject(-1, TmpHidden);
+  TmpHidden.Layer := 1;
+  FCAD.Layers[1].Visible := False;
+  TmpRec := TRecordingGraphics.Create(Rect(0, 0, 210, 297));
+  try
+    TmpCanvas := TDecorativeCanvas.Create(TmpRec, False);
+    try
+      CADDrawPage(FCAD, A4, TCADPageDevice.FromDPI(25.4, 25.4), 0, TmpCanvas);
+    finally
+      TmpCanvas.Free;
+    end;
+    Assert.AreEqual(1, TmpRec.CountOf('MoveTo'), 'only the visible line: ' +
+      TmpRec.Log.Text);
   finally
     TmpRec.Free;
   end;

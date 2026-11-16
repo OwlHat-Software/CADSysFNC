@@ -18120,13 +18120,14 @@ begin
         TmpObj := TObject2D(TmpIter.First);
         while TmpObj <> nil do
         begin
+          { A layer that is off is off on paper too (CS-U2): SetCanvas
+            answers whether it is shown, as in the model view. A
+            viewport's override can hide more, not show what is off. }
           if TmpObj.IsVisible(TmpWindow, ADrawMode) and
             (not TmpView.UseLayerOverride or
-            not(TmpObj.Layer in TmpView.HiddenLayers)) then
-          begin
-            ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+            not(TmpObj.Layer in TmpView.HiddenLayers)) and
+            ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer) then
             TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
-          end;
           TmpObj := TObject2D(TmpIter.Next);
         end;
       finally
@@ -18210,11 +18211,9 @@ begin
           here, and only the editing viewport, which draws the sheet's
           objects through its own display list, shows them. }
         if (TmpObj.StandsFor = nil) and
-          TmpObj.IsVisible(ASheet.PaperRect2D, ADrawMode) then
-        begin
-          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer);
+          TmpObj.IsVisible(ASheet.PaperRect2D, ADrawMode) and
+          ACAD.Layers.SetCanvas(ACanvas, TmpObj.Layer) then
           TmpObj.Draw(TmpTransf, ACanvas, TmpClip, ADrawMode);
-        end;
         TmpObj := TObject2D(TmpIter.Next);
       end;
     finally
@@ -22604,11 +22603,9 @@ begin
     TmpClipRect := RectToRect2D(ControlRect);
     while Tmp <> nil do
     begin
-      if Tmp.IsVisible(CADRect, DrawMode) then
-      begin
-        fCADCmp2D.Layers.SetCanvas(TmpCanvas, Tmp.Layer);
+      if Tmp.IsVisible(CADRect, DrawMode) and
+        fCADCmp2D.Layers.SetCanvas(TmpCanvas, Tmp.Layer) then
         Tmp.Draw(TmpTransform, TmpCanvas, TmpClipRect, DrawMode);
-      end;
       Tmp := TObject2D(TmpIter.Next);
     end;
     ShowControlPoints := TmpFlag;
@@ -24364,9 +24361,9 @@ begin
     ShowControlPoints := False;
     while Tmp <> nil do
     begin
-      if Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) then
+      if Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) and
+        fCADCmp3D.Layers.SetCanvas(TmpCanvas, Tmp.Layer) then
       begin
-        fCADCmp3D.Layers.SetCanvas(TmpCanvas, Tmp.Layer);
         { White on white prints as nothing. }
         if Cnv.Pen.Color = cadclWhite then
           Cnv.Pen.Color := cadclBlack;

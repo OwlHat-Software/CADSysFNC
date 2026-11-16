@@ -480,6 +480,14 @@ type
     procedure AnObjectAddedToTheModelIsThereOnTheNextDraw;
     [Test]
     procedure AnObjectMovedInTheModelIsDrawnWhereItNowIs;
+    [Test]
+    procedure AHiddenLayerIsNotDrawnThroughAViewport;
+    [Test]
+    procedure AHiddenLayerIsNotDrawnOnTheSheet;
+    [Test]
+    procedure AVisibleLayerStillIs;
+    [Test]
+    procedure AViewportOverrideStillHidesMore;
   end;
 
   [TestFixture]
@@ -1847,6 +1855,71 @@ begin
   finally
     TmpRec.Free;
   end;
+end;
+
+procedure TCADSheetDrawingTests.AHiddenLayerIsNotDrawnThroughAViewport;
+var
+  TmpLines: Integer;
+  TmpText: String;
+begin
+  { CS-U2: a second line, across the first, on layer 1, and layer 1 is
+    off. The first stays visible: with nothing visible the drawing has no
+    extent, and a viewport that frames the whole of it has nothing to
+    frame. }
+  FViewport.ShowBorder := False;
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 150), Point2D(300, 0)));
+  FCAD.GetObject(1).Layer := 1;
+  FCAD.Layers[1].Visible := False;
+  DrawSheetNow(TmpLines, TmpText);
+  Assert.AreEqual(1, TmpLines, 'only the visible line through the viewport: '
+    + TmpText);
+end;
+
+procedure TCADSheetDrawingTests.AHiddenLayerIsNotDrawnOnTheSheet;
+var
+  TmpLines: Integer;
+  TmpText: String;
+  TmpNote: TObject2D;
+begin
+  FViewport.ShowBorder := False;
+  FCAD.GetObject(0).Layer := 2;
+  TmpNote := TLine2D.Create(-1, Point2D(150, 20), Point2D(200, 20));
+  TmpNote.Layer := 1;
+  FSheet.AddObject(TmpNote);
+  FCAD.Layers[1].Visible := False;
+  DrawSheetNow(TmpLines, TmpText);
+  { The model's line, through the viewport, and not the sheet's own. }
+  Assert.AreEqual(1, TmpLines, 'only the model''s line: ' + TmpText);
+end;
+
+procedure TCADSheetDrawingTests.AVisibleLayerStillIs;
+var
+  TmpLines: Integer;
+  TmpText: String;
+  TmpNote: TObject2D;
+begin
+  FViewport.ShowBorder := False;
+  FCAD.GetObject(0).Layer := 1;
+  TmpNote := TLine2D.Create(-1, Point2D(150, 20), Point2D(200, 20));
+  TmpNote.Layer := 1;
+  FSheet.AddObject(TmpNote);
+  DrawSheetNow(TmpLines, TmpText);
+  Assert.AreEqual(2, TmpLines, 'both: ' + TmpText);
+end;
+
+procedure TCADSheetDrawingTests.AViewportOverrideStillHidesMore;
+var
+  TmpLines: Integer;
+  TmpText: String;
+  TmpView: TCADViewSpec;
+begin
+  FCAD.GetObject(0).Layer := 1;
+  TmpView := FViewport.View;
+  TmpView.UseLayerOverride := True;
+  TmpView.HiddenLayers := [1];
+  FViewport.View := TmpView;
+  DrawSheetNow(TmpLines, TmpText);
+  Assert.AreEqual(0, TmpLines, 'hidden in this viewport only: ' + TmpText);
 end;
 
 procedure TCADSheetDrawingTests.Setup;
