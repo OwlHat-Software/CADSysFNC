@@ -240,6 +240,32 @@ type
     procedure APrinterGetsAPagePerTile;
   end;
 
+  { : CS-U3: a PDF written a page at a time, the drawing changed between
+    pages. }
+  [TestFixture]
+  TCADPDFWriterTests = class(TObject)
+  private
+    FCAD: TFNCCADCmp2D;
+    FSheet: TCADSheet;
+    FFile: string;
+    function PageCount: Integer;
+  public
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure ThreePagesOfOneSheetCarryThreeColours;
+    [Test]
+    procedure SheetsAndPagesOfTheModelMixTheirPaper;
+    [Test]
+    procedure APageTheSetupDoesNotHaveIsNotAdded;
+    [Test]
+    procedure FreedWithoutEndDocumentTheFileIsClosed;
+    [Test]
+    procedure AddingWithNoDocumentRaises;
+  end;
+
   { : CS-10: text that has to come out the same on every device -
     turned labels, and word-wrapped text measured before it is drawn. }
   [TestFixture]
@@ -2528,6 +2554,180 @@ begin
 end;
 
 { ==================================================================
+  TCADPDFWriterTests
+  ================================================================== }
+
+procedure TCADPDFWriterTests.Setup;
+begin
+  FCAD := TFNCCADCmp2D.Create(nil);
+  FCAD.AddObject(-1, TLine2D.Create(-1, Point2D(0, 0), Point2D(100, 100)));
+  FSheet := FCAD.Sheets.Add('Scene');
+  FSheet.Paper := pkA4;
+  FSheet.Orientation := pgoPortrait;
+  FSheet.AddViewport.RectMM := Rect2D(20, 20, 190, 200);
+  FSheet.AddObject(TLine2D.Create(-1, Point2D(20, 250), Point2D(190, 250)));
+  FFile := TPath.Combine(TPath.GetTempPath, 'CADSysPDFWriter.pdf');
+end;
+
+procedure TCADPDFWriterTests.TearDown;
+begin
+  FCAD.Free;
+  if TFile.Exists(FFile) then
+    TFile.Delete(FFile);
+end;
+
+function TCADPDFWriterTests.PageCount: Integer;
+begin
+  Result := TRegEx.Matches(TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile)),
+    '/Type/Page(?!s)').Count;
+end;
+
+procedure TCADPDFWriterTests.ThreePagesOfOneSheetCarryThreeColours;
+const
+  { The stroke colour each page sets, as PDF writes it: R G B RG. }
+  Strokes: array [0 .. 2] of string = ('1(\.0+)? 0(\.0+)? 0(\.0+)? RG',
+    '0(\.0+)? 1(\.0+)? 0(\.0+)? RG', '0(\.0+)? 0(\.0+)? 1(\.0+)? RG');
+var
+  TmpWriter: TCADPDFWriter;
+  TmpContent: string;
+  TmpAt: array [0 .. 2] of Integer;
+  TmpMatch: TMatch;
+  Cont: Integer;
+  Colours: array [0 .. 2] of TCADColor;
+begin
+  Colours[0] := CADColor($FF, 255, 0, 0);
+  Colours[1] := CADColor($FF, 0, 255, 0);
+  Colours[2] := CADColor($FF, 0, 0, 255);
+  TmpWriter := TCADPDFWriter.Create(FCAD);
+  try
+    TmpWriter.BeginDocument(FFile);
+    for Cont := 0 to 2 do
+    begin
+      { The caller changes the drawing between two pages. }
+      FCAD.Layers[0].Pen.Color := Colours[Cont];
+      Assert.IsTrue(TmpWriter.AddSheet(FSheet), 'page ' + IntToStr(Cont));
+    end;
+    Assert.AreEqual(3, TmpWriter.PageCount, 'counted');
+    TmpWriter.EndDocument;
+    Assert.IsFalse(TmpWriter.Active, 'closed');
+  finally
+    TmpWriter.Free;
+  end;
+  Assert.AreEqual(3, PageCount, 'three pages');
+  TmpContent := PDFContent(FFile);
+  for Cont := 0 to 2 do
+  begin
+    TmpMatch := TRegEx.Match(TmpContent, '(?<![\d.])' + Strokes[Cont]);
+    Assert.IsTrue(TmpMatch.Success, 'colour ' + IntToStr(Cont) + ' in: ' +
+      Copy(TmpContent, 1, 400));
+    TmpAt[Cont] := TmpMatch.Index;
+  end;
+  { The pages' streams are in page order: each colour on its own page. }
+  Assert.IsTrue((TmpAt[0] < TmpAt[1]) and (TmpAt[1] < TmpAt[2]),
+    'red, then green, then blue');
+end;
+
+procedure TCADPDFWriterTests.SheetsAndPagesOfTheModelMixTheirPaper;
+var
+  TmpWriter: TCADPDFWriter;
+  TmpSetup: TCADPageSetup;
+  TmpRaw: string;
+begin
+  TmpSetup := TCADPageSetup.Default;
+  TmpSetup.Paper := pkA3;
+  TmpSetup.Orientation := pgoLandscape;
+  TmpSetup.View.Window := Rect2D(0, 0, 50, 50);
+  TmpWriter := TCADPDFWriter.Create(FCAD);
+  try
+    TmpWriter.BeginDocument(FFile);
+    TmpWriter.AddSheet(FSheet);
+    Assert.IsTrue(TmpWriter.AddPage(TmpSetup), 'a window of the model');
+    TmpWriter.AddSheet(FSheet);
+    TmpWriter.EndDocument;
+  finally
+    TmpWriter.Free;
+  end;
+  TmpRaw := TEncoding.ANSI.GetString(TFile.ReadAllBytes(FFile));
+  Assert.AreEqual(3, PageCount, 'three pages');
+  Assert.AreEqual(2, TRegEx.Matches(TmpRaw, '/MediaBox\[0 0 595 842\]').Count,
+    'the sheet twice on A4');
+  Assert.AreEqual(1, TRegEx.Matches(TmpRaw, '/MediaBox\[0 0 119[01] 84[12]\]').Count,
+    'the model on A3 landscape');
+end;
+
+procedure TCADPDFWriterTests.APageTheSetupDoesNotHaveIsNotAdded;
+var
+  TmpWriter: TCADPDFWriter;
+begin
+  TmpWriter := TCADPDFWriter.Create(FCAD);
+  try
+    TmpWriter.BeginDocument(FFile);
+    Assert.IsFalse(TmpWriter.AddPage(TCADPageSetup.Default, 5), 'no page 5');
+    Assert.IsFalse(TmpWriter.AddPage(TCADPageSetup.Default, -1), 'no page -1');
+    Assert.IsTrue(TmpWriter.AddPage(TCADPageSetup.Default), 'page 0');
+    Assert.AreEqual(1, TmpWriter.PageCount, 'one');
+    TmpWriter.EndDocument;
+  finally
+    TmpWriter.Free;
+  end;
+  Assert.AreEqual(1, PageCount, 'one in the file');
+end;
+
+procedure TCADPDFWriterTests.FreedWithoutEndDocumentTheFileIsClosed;
+var
+  TmpWriter: TCADPDFWriter;
+begin
+  TmpWriter := TCADPDFWriter.Create(FCAD);
+  try
+    TmpWriter.BeginDocument(FFile);
+    TmpWriter.AddSheet(FSheet);
+  finally
+    TmpWriter.Free;
+  end;
+  Assert.IsTrue(Pos('%%EOF', TEncoding.ANSI.GetString(
+    TFile.ReadAllBytes(FFile))) > 0, 'a complete file');
+  { And not held open: TearDown can delete it. }
+  TFile.Delete(FFile);
+  Assert.IsFalse(TFile.Exists(FFile), 'deleted');
+end;
+
+procedure TCADPDFWriterTests.AddingWithNoDocumentRaises;
+var
+  TmpWriter: TCADPDFWriter;
+begin
+  TmpWriter := TCADPDFWriter.Create(FCAD);
+  try
+    Assert.WillRaise(
+      procedure
+      begin
+        TmpWriter.AddSheet(FSheet);
+      end, ECADPageError, 'before BeginDocument');
+    TmpWriter.BeginDocument(FFile);
+    Assert.WillRaise(
+      procedure
+      begin
+        TmpWriter.BeginDocument(FFile);
+      end, ECADPageError, 'twice');
+    Assert.WillRaise(
+      procedure
+      begin
+        TmpWriter.EndDocument;
+      end, ECADPageError, 'with no page');
+    Assert.IsFalse(TmpWriter.Active, 'and closed');
+    TmpWriter.BeginDocument(FFile);
+    TmpWriter.AddSheet(FSheet);
+    TmpWriter.EndDocument;
+    Assert.WillRaise(
+      procedure
+      begin
+        TmpWriter.EndDocument;
+      end, ECADPageError, 'after EndDocument');
+  finally
+    TmpWriter.Free;
+  end;
+end;
+
+{ ==================================================================
   TCADSheetTiledOutputTests
   ================================================================== }
 
@@ -3023,6 +3223,7 @@ TDUnitX.RegisterTestFixture(TCADPDFExtrasTests);
 TDUnitX.RegisterTestFixture(TCADPDFPaperTests);
 TDUnitX.RegisterTestFixture(TCADPDFAlphaTests);
 TDUnitX.RegisterTestFixture(TCADSheetTiledOutputTests);
+TDUnitX.RegisterTestFixture(TCADPDFWriterTests);
 TDUnitX.RegisterTestFixture(TCADGDIExportTests);
 TDUnitX.RegisterTestFixture(TCADSVGExportTests);
 TDUnitX.RegisterTestFixture(TCADFNCGraphicsTests);
