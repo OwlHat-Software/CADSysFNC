@@ -2558,6 +2558,12 @@ type
       is visible and the pen and brush of the canvas are modified.
     }
     function SetCanvas(const Cnv: TDecorativeCanvas): Boolean;
+    { : Gives the layer back everything Create gave it - name, pen (width,
+      mode and line weight included), brush (gradient included), pattern,
+      Active, Visible, Opaque, Streamable and Tag - and clears Modified, so
+      that TLayers.SaveToJSON leaves the layer out again (CS-U1). The pen
+      and brush stay the same instances. }
+    procedure Reset;
     { : This property contains the name of the layer.
     }
     property Name: TLayerName read fName write SetName;
@@ -2659,6 +2665,9 @@ type
       Use this property te restore the layer values to their original values
     }
     procedure RestoreLayers;
+    { : Gives layer AIndex its defaults back and clears its Modified - see
+      TLayer.Reset. }
+    procedure Reset(const AIndex: Byte);
     { : This property contains the set of 256 layers.
 
       Use this property to change the setting of a layer for a <See Class=TFNCCADCmp>.
@@ -16400,6 +16409,35 @@ begin
   Cnv.Graphics.FontColor := fPen.Color;
   Cnv.Graphics.Transparent := not fOpaque;
   Cnv.DecorativePen.Assign(fDecorativePen);
+end;
+
+procedure TLayer.Reset;
+var
+  TmpDefault: TLayer;
+begin
+  TmpDefault := TLayer.Create(fIdx);
+  try
+    fName := TmpDefault.fName;
+    { Assign, not a new object: whoever holds the pen or the brush keeps
+      holding this layer's, and their OnChange stays wired. }
+    fPen.Assign(TmpDefault.fPen);
+    fBrush.Assign(TmpDefault.fBrush);
+    fDecorativePen.Assign(TmpDefault.fDecorativePen);
+    fActive := TmpDefault.fActive;
+    fVisible := TmpDefault.fVisible;
+    fOpaque := TmpDefault.fOpaque;
+    fStreamable := TmpDefault.fStreamable;
+    fTag := TmpDefault.fTag;
+  finally
+    TmpDefault.Free;
+  end;
+  { Last: the pen's and the brush's OnChange have just set it. }
+  fModified := False;
+end;
+
+procedure TLayers.Reset(const AIndex: Byte);
+begin
+  TLayer(fLayers[AIndex]).Reset;
 end;
 
 function TLayers.GetLayerByName(const Nm: TLayerName): TLayer;

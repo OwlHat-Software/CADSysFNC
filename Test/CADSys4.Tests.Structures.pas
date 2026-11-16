@@ -18,6 +18,7 @@ interface
 uses
   System.SysUtils,
   System.Classes,
+  System.JSON,
   Vcl.Graphics,
   DUnitX.TestFramework,
   VCL.FNCCS4BaseTypes,
@@ -396,6 +397,14 @@ type
     procedure RestoreLayers_KeepsBrushModificationTrackingAlive;
     [Test]
     procedure RestoreLayers_KeepsPenModificationTrackingAlive;
+    [Test]
+    procedure Reset_GivesTheDefaultsBackAndClearsModified;
+    [Test]
+    procedure Reset_LeavesTheLayerOutOfTheJSONAgain;
+    [Test]
+    procedure Reset_KeepsThePenAndBrushAndTheirTracking;
+    [Test]
+    procedure Reset_LeavesTheOtherLayersAlone;
   end;
 
   { ---------------------------------------------------------------- }
@@ -2082,6 +2091,102 @@ begin
   Lay.Pen.Color := TColorToCADColor(clRed);
   Assert.IsTrue(Lay.Modified,
     'the pen OnChange handler must survive RestoreLayers');
+end;
+
+procedure TLayersTests.Reset_GivesTheDefaultsBackAndClearsModified;
+var
+  Lay, Fresh: TLayer;
+begin
+  Lay := FLayers[3];
+  Lay.Name := 'Dimensions';
+  Lay.Pen.Color := TColorToCADColor(clRed);
+  Lay.Pen.Width := 4;
+  Lay.Pen.Style := cpsDash;
+  Lay.Pen.LineWeightMM := 0.5;
+  Lay.Brush.Color := TColorToCADColor(clRed);
+  Lay.Brush.Color2 := TColorToCADColor(clBlue);
+  Lay.Brush.Style := cbsGradient;
+  Lay.DecorativePen.SetPenStyle('1100');
+  Lay.Active := False;
+  Lay.Visible := False;
+  Lay.Opaque := True;
+  Lay.Streamable := False;
+  Lay.Tag := 99;
+  Assert.IsTrue(Lay.Modified, 'precondition');
+
+  FLayers.Reset(3);
+
+  Fresh := TLayer.Create(3);
+  try
+    Assert.AreEqual(String(Fresh.Name), String(Lay.Name), 'Name');
+    Assert.AreEqual<Cardinal>(Cardinal(Fresh.Pen.Color), Cardinal(Lay.Pen.Color), 'Pen.Color');
+    Assert.AreEqual(Fresh.Pen.Width, Lay.Pen.Width, 'Pen.Width');
+    Assert.IsTrue(Fresh.Pen.Style = Lay.Pen.Style, 'Pen.Style');
+    Assert.IsTrue(Fresh.Pen.Mode = Lay.Pen.Mode, 'Pen.Mode');
+    Assert.AreEqual(Fresh.Pen.LineWeightMM, Lay.Pen.LineWeightMM, 'Pen.LineWeightMM');
+    Assert.AreEqual<Cardinal>(Cardinal(Fresh.Brush.Color), Cardinal(Lay.Brush.Color), 'Brush.Color');
+    Assert.AreEqual<Cardinal>(Cardinal(Fresh.Brush.Color2), Cardinal(Lay.Brush.Color2), 'Brush.Color2');
+    Assert.IsTrue(Fresh.Brush.Style = Lay.Brush.Style, 'Brush.Style');
+    Assert.AreEqual(Fresh.DecorativePen.PatternLenght, Lay.DecorativePen.PatternLenght, 'pattern');
+    Assert.IsTrue(Lay.Active, 'Active');
+    Assert.IsTrue(Lay.Visible, 'Visible');
+    Assert.IsFalse(Lay.Opaque, 'Opaque');
+    Assert.IsTrue(Lay.Streamable, 'Streamable');
+    Assert.AreEqual(0, Lay.Tag, 'Tag');
+    Assert.IsFalse(Lay.Modified, 'Modified');
+  finally
+    Fresh.Free;
+  end;
+end;
+
+procedure TLayersTests.Reset_LeavesTheLayerOutOfTheJSONAgain;
+var
+  TmpBefore, TmpAfter: TJSONArray;
+  TmpTextBefore: string;
+begin
+  { CS-U1: undo of the first change to a layer gives the same JSON back. }
+  TmpBefore := FLayers.SaveToJSON;
+  try
+    TmpTextBefore := TmpBefore.ToJSON;
+  finally
+    TmpBefore.Free;
+  end;
+  FLayers[7].Pen.Color := TColorToCADColor(clRed);
+  FLayers[7].Name := 'Walls';
+  FLayers.Reset(7);
+  TmpAfter := FLayers.SaveToJSON;
+  try
+    Assert.AreEqual(TmpTextBefore, TmpAfter.ToJSON, 'the same as before the edit');
+    Assert.AreEqual(0, TmpAfter.Count, 'no layer written');
+  finally
+    TmpAfter.Free;
+  end;
+end;
+
+procedure TLayersTests.Reset_KeepsThePenAndBrushAndTheirTracking;
+var
+  Lay: TLayer;
+  PenBefore: TCADSimplePen;
+  BrushBefore: TCADSimpleBrush;
+begin
+  Lay := FLayers[3];
+  PenBefore := Lay.Pen;
+  BrushBefore := Lay.Brush;
+  Lay.Reset;
+  Assert.IsTrue(Lay.Pen = PenBefore, 'the same pen');
+  Assert.IsTrue(Lay.Brush = BrushBefore, 'the same brush');
+  Lay.Brush.Color := TColorToCADColor(clRed);
+  Assert.IsTrue(Lay.Modified, 'a change after Reset still counts');
+end;
+
+procedure TLayersTests.Reset_LeavesTheOtherLayersAlone;
+begin
+  FLayers[2].Name := 'Kept';
+  FLayers[3].Name := 'Gone';
+  FLayers.Reset(3);
+  Assert.AreEqual('Kept', String(FLayers[2].Name), 'layer 2');
+  Assert.IsTrue(FLayers[2].Modified, 'layer 2 still written');
+  Assert.AreEqual('Layer 3', String(FLayers[3].Name), 'layer 3');
 end;
 
 { ================================================================== }
