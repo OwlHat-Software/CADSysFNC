@@ -7,7 +7,7 @@ surface underneath.
 
 | Output | Unit | Frameworks | Routines |
 |---|---|---|---|
-| PDF | `FNCCS4PDF` | VCL, FMX, LCL | `CADSaveSheetsToPDF`, `CADSavePagesToPDF`, `CADSaveSheetTiledToPDF`, `CADAddPDFLinks` |
+| PDF | `FNCCS4PDF` | VCL, FMX, LCL | `CADSaveSheetsToPDF`, `CADSavePagesToPDF`, `CADSaveSheetTiledToPDF`, `TCADPDFWriter`, `CADAddPDFLinks` |
 | PNG | `FNCCS4Image` | VCL, FMX | `CADSaveSheetToImage`, `CADSaveSheetToPNGStream`, `CADSaveModelRectToImage`, `CADSaveModelRectToPNGStream` |
 | SVG | `FNCCS4SVG` | VCL, FMX, LCL | `CADSaveSheetsToSVG`, `CADSaveSheetToSVGStream`, `TCADSVGGraphics` |
 | EMF | `FNCCS4GDI` | VCL, FMX (Windows) | `CADSheetToEMF`, `CADModelRectToEMF`, `CADSaveSheetToEMF` |
@@ -60,6 +60,33 @@ edits the PDF sees bands, not one gradient object.
 A colour's alpha reaches the page: a translucent fill, pen or text is drawn with
 a graphics state of its own, and the rest of the page is as it would be. A
 gradient's alpha is worked out per band, from the one colour's to the other's.
+
+### A page at a time
+
+`TCADPDFWriter` writes a PDF a page at a time, so the drawing can change
+between two pages and the same sheet can be given more than once - a page per
+scene, a page per date:
+
+```pascal
+Writer := TCADPDFWriter.Create(CAD);
+try
+  Writer.BeginDocument('scenes.pdf');
+  for Scene in Scenes do
+  begin
+    Scene.Apply(CAD);            { whatever changes the drawing }
+    Writer.AddSheet(Sheet);      { drawn now, as it is now }
+  end;
+  Writer.AddPage(Setup, 0);      { a page of the model: Setup.View.Window }
+  Writer.EndDocument;
+finally
+  Writer.Free;
+end;
+```
+
+Each page has its own paper. `AddSheetTile` adds one tile of a tiled sheet.
+`EndDocument` adds the translucent colours and links after the file is closed;
+a writer freed without it, after an exception, leaves a closed PDF without
+them. The three `CADSave...ToPDF` routines are this writer in a loop.
 
 ## PNG
 
