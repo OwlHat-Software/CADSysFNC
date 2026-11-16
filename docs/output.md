@@ -127,6 +127,14 @@ on the VCL takes the paper from the printer as it is set, so that has to agree
 with the tiling. Every page holds the whole sheet, clipped, so a heavy sheet
 makes a large PDF.
 
+## Layers
+
+Every route draws an object only when its layer is shown: a layer that is off in
+the drawing is off in a paper view, its preview, print, PDF, image, SVG and
+metafile, as it is in the model view. A viewport's or a page setup's layer
+override (`UseLayerOverride`, `HiddenLayers`) hides more on top of that; it
+cannot show a layer that is off.
+
 ## The viewport draw hook
 
 `TFNCCADCmp2D.OnDrawSheetViewport` is called on every one of these routes, so

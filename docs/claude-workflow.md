@@ -19,6 +19,7 @@ repository's. Section 9 explains how this file relates to `CLAUDE.md`.
 | Document | What it holds | IDs |
 |---|---|---|
 | `docs\masterplanner-changes.md` | The plan: what the applications need from the library, with priority, status and a test per item | CS-xx |
+| `docs\visualplanner-changes.md` | The same for VisualPlannerFNC; its master is `VisualPlannerFNC\docs\library-changes\cadsysfnc_changes.md` | CS-Un |
 | `docs\decisions\` | One decision record per choice (section 4) | 0001, 0002, ... |
 | `README.md`, `docs\migrating.md`, `docs\output.md`, `docs\paper-space.md`, `docs\json-format.md`, `docs\drawing-speed.md` | The library's user documentation, kept up to date with the work | - |
 | `docs\port\` | The port history. A record, not a plan; read it before changing the drawing path | - |

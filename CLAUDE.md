@@ -10,7 +10,8 @@ The way of working is `docs\claude-workflow.md` (decision 0001). The short versi
 - The plan is `docs\masterplanner-changes.md`: change IDs CS-xx (the MP-xxx and WP-x.y in it are Masterplanner's). Its
   master copy is `masterplanner\docs\library-changes\CADSysFNC_changes.md`; new items are copied in from there. Mention
   the IDs in commits and pull requests (`CS-21: ...`). "Continue with CS-xx" is a complete instruction. When an item is
-  done, say so in that document, with the commit.
+  done, say so in that document, with the commit. VisualPlannerFNC's requests are CS-Un, in
+  `docs\visualplanner-changes.md` (master: `VisualPlannerFNC\docs\library-changes\cadsysfnc_changes.md`), the same way.
 - New library units: add them to the table in `Tools\gen-units.ps1`, to the runtime packages in `Packages\delphi` and to
   `Test\CADSysFMXCheck.dpr`. Tests: `Test\CADSys4.Tests.<area>.pas`, in the `.dpr` and `.dproj`. What draws through the
   FNC backend goes in `CADSysFNCTests`.
